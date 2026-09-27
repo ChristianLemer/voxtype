@@ -68,6 +68,16 @@ impl VoxtypeState {
         tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("icon buffer matches its size")
     }
 
+    #[cfg(windows)]
+    fn pill_state(&self) -> crate::win::pill::PillState {
+        use crate::win::pill::PillState;
+        match self {
+            VoxtypeState::Recording => PillState::Recording,
+            VoxtypeState::Transcribing => PillState::Transcribing,
+            VoxtypeState::Idle | VoxtypeState::Stopped => PillState::Hidden,
+        }
+    }
+
     fn status_text(&self) -> &'static str {
         match self {
             VoxtypeState::Idle => "Status: Ready",
@@ -634,6 +644,13 @@ pub fn run(state_file: PathBuf) -> ! {
         .with_tooltip(initial_state.status_text());
     let tray = builder.build().expect("Failed to create tray icon");
 
+    #[cfg(windows)]
+    let pill = crate::win::pill::Pill::new();
+    #[cfg(windows)]
+    if let Some(ref pill) = pill {
+        pill.set(initial_state.pill_state());
+    }
+
     println!("Menu bar is running. Look for the icon in your menu bar.");
     println!("Press Ctrl+C to stop.\n");
 
@@ -818,6 +835,9 @@ pub fn run(state_file: PathBuf) -> ! {
                 {
                     let _ = tray.set_icon(Some(new_state.tray_image()));
                     let _ = tray.set_tooltip(Some(new_state.status_text()));
+                    if let Some(ref pill) = pill {
+                        pill.set(new_state.pill_state());
+                    }
                 }
                 let _ = status_item.set_text(new_state.status_text());
                 last_state = new_state;

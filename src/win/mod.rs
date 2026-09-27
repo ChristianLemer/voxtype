@@ -8,5 +8,6 @@
 pub mod fs;
 pub mod libc_compat;
 pub mod net;
+pub mod pill;
 pub mod process;
 pub mod signal;
