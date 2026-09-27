@@ -79,8 +79,10 @@ pub mod eager;
 pub mod error;
 #[cfg(target_os = "linux")]
 pub mod hotkey;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 pub mod hotkey_macos;
+#[cfg(windows)]
+pub mod hotkey_windows;
 pub mod meeting;
 #[cfg(any(target_os = "macos", windows))]
 pub mod menubar;

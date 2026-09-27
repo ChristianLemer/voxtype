@@ -44,6 +44,11 @@ pub enum HotkeyError {
 
     #[error("evdev error: {0}")]
     Evdev(String),
+
+    #[error(
+        "Cannot install the Windows keyboard hook: {0}\n  Use 'voxtype record' commands instead."
+    )]
+    WindowsHook(String),
 }
 
 /// Errors related to audio capture

@@ -10,8 +10,10 @@ use crate::eager::{self, EagerConfig};
 use crate::error::Result;
 #[cfg(target_os = "linux")]
 use crate::hotkey::{self, HotkeyEvent};
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 use crate::hotkey_macos::{self as hotkey, HotkeyEvent};
+#[cfg(windows)]
+use crate::hotkey_windows::{self as hotkey, HotkeyEvent};
 use crate::meeting::{self, MeetingDaemon, MeetingEvent, StorageConfig};
 use crate::model_manager::ModelManager;
 use crate::notification::{self, Lifetime};
