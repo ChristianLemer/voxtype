@@ -158,14 +158,14 @@ fn open_path(path: &str) {
     let _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
-/// Open a command in a new console window
+/// Run a voxtype command in a console window of its own
 #[cfg(windows)]
 fn open_console(args: &[&str]) {
-    let voxtype_path = get_voxtype_path();
-    let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", "Voxtype", "cmd", "/k"])
-        .arg(voxtype_path)
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let _ = std::process::Command::new(get_voxtype_path())
         .args(args)
+        .creation_flags(CREATE_NEW_CONSOLE)
         .spawn();
 }
 
