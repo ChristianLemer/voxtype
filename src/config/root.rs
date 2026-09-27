@@ -243,6 +243,17 @@ impl Config {
     }
 
     /// Get the runtime directory for ephemeral files (state, sockets)
+    #[cfg(windows)]
+    pub fn runtime_dir() -> PathBuf {
+        // Per-user and never roamed: pid, lock, state and override sentinels.
+        std::env::var("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("voxtype")
+            .join("runtime")
+    }
+
+    #[cfg(not(windows))]
     pub fn runtime_dir() -> PathBuf {
         // Use XDG_RUNTIME_DIR if available, otherwise fall back to /tmp
         std::env::var("XDG_RUNTIME_DIR")

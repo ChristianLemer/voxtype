@@ -5,6 +5,8 @@
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use voxtype::menubar;
+#[cfg(windows)]
+use voxtype::win::libc_compat as libc;
 use voxtype::{config, daemon, setup, transcribe, Cli, Commands, ConfigAction, SetupAction};
 
 use super::config_get::run_config_get;

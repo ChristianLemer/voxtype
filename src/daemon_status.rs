@@ -50,6 +50,12 @@ pub fn read_pid() -> Option<i32> {
 
 /// Check whether `pid` corresponds to a live process. Uses signal 0
 /// (existence check) which works on Linux and macOS without side effects.
+#[cfg(windows)]
+pub fn is_running(pid: i32) -> bool {
+    crate::win::process::is_alive(pid)
+}
+
+#[cfg(unix)]
 pub fn is_running(pid: i32) -> bool {
     // SAFETY: libc::kill with signal 0 only probes for the process; it
     // does not deliver a signal, so there's no observable side effect.

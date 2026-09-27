@@ -18,7 +18,10 @@
 //! This sets VK_LOADER_DRIVERS_SELECT internally to filter Vulkan ICDs.
 
 use super::binary::{install_active_binary, resolve_active_binary};
+#[cfg(windows)]
+use crate::win::fs::symlink;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;

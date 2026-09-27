@@ -16,7 +16,10 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use crate::win::net::UnixStream;
 use tokio::io::AsyncReadExt;
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::time::sleep;
 

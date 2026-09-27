@@ -43,8 +43,11 @@ pub use streaming::StreamingSession;
 
 use crate::config::{OutputConfig, OutputDriver};
 use crate::error::OutputError;
+#[cfg(windows)]
+use crate::win::fs::FileTypeExt;
 use std::borrow::Cow;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -79,8 +82,11 @@ pub fn find_ydotool_socket() -> Option<PathBuf> {
         paths.push(PathBuf::from("/tmp/.ydotool_socket"));
 
         // 4. /run/user/$UID fallback
-        let uid = unsafe { libc::getuid() };
-        paths.push(PathBuf::from(format!("/run/user/{}/.ydotool_socket", uid)));
+        #[cfg(unix)]
+        {
+            let uid = unsafe { libc::getuid() };
+            paths.push(PathBuf::from(format!("/run/user/{}/.ydotool_socket", uid)));
+        }
 
         paths
     };

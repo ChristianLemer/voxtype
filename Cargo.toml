@@ -157,6 +157,10 @@ mac-notification-sys = "0.6"  # Native macOS notifications
 rdev = "0.5.3"
 tray-icon = "0.21.3"
 
+[target.'cfg(windows)'.dependencies]
+rdev = "0.5.3"  # global hotkey, shared with macOS via src/hotkey_macos.rs
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Input handling (evdev for kernel-level key events)
 evdev = "0.13.2"

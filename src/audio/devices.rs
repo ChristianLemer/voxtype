@@ -53,6 +53,14 @@ struct SilencedStderr {
     saved_fd: Option<libc::c_int>,
 }
 
+#[cfg(windows)]
+impl SilencedStderr {
+    fn install() -> Self {
+        Self { saved_fd: None }
+    }
+}
+
+#[cfg(unix)]
 impl SilencedStderr {
     fn install() -> Self {
         let null_fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
@@ -72,6 +80,7 @@ impl SilencedStderr {
     }
 }
 
+#[cfg(unix)]
 impl Drop for SilencedStderr {
     fn drop(&mut self) {
         if let Some(saved) = self.saved_fd.take() {

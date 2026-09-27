@@ -44,9 +44,12 @@
 //! - 1: exec of `qs` failed for some other reason.
 
 use std::env;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+#[cfg(windows)]
+use voxtype::win::process::CommandExt;
 
 use voxtype::config;
 use voxtype::osd::style;

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use voxtype::daemon::result_sidecar_path;
+#[cfg(windows)]
+use voxtype::win::libc_compat as libc;
 use voxtype::{config, daemon_status, RecordAction};
 
 /// Send a record command to the running daemon via Unix signals or file triggers

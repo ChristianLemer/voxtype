@@ -15,6 +15,7 @@ static SIGILL_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Constructor function that runs before main() via platform-specific init section
 /// This ensures the SIGILL handler is installed before any library
 /// initialization code that might use unsupported instructions.
+#[cfg(unix)]
 #[used]
 #[cfg_attr(target_os = "linux", link_section = ".init_array")]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
@@ -30,6 +31,15 @@ static INIT_SIGILL_HANDLER: extern "C" fn() = {
 ///
 /// This is called automatically before main() via .init_array, but can also
 /// be called manually if needed.
+///
+/// Windows reports illegal instructions as structured exceptions, not SIGILL,
+/// so there is nothing to install there.
+#[cfg(windows)]
+pub fn install_sigill_handler() {
+    SIGILL_HANDLER_INSTALLED.store(true, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
 pub fn install_sigill_handler() {
     // Only install once
     if SIGILL_HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
@@ -44,6 +54,7 @@ pub fn install_sigill_handler() {
     }
 }
 
+#[cfg(unix)]
 extern "C" fn sigill_handler(_sig: i32) {
     // SAFETY: We can only use async-signal-safe functions here.
     // write() to stderr is safe, println! is not.

@@ -134,6 +134,7 @@ impl HotkeyListener for RdevHotkeyListener {
 
                 match event.event_type {
                     EventType::KeyPress(key) => {
+                        tracing::debug!("Key pressed: {:?}", key);
                         if key == target_key {
                             let mut last = last_press_clone.lock().unwrap();
                             if last.elapsed() > Duration::from_millis(debounce_ms) {
@@ -276,8 +277,19 @@ pub fn create_listener(
     Ok(Box::new(RdevHotkeyListener::new(config)?))
 }
 
+#[cfg(not(target_os = "macos"))]
+fn is_accessibility_granted() -> bool {
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn check_accessibility_permission() -> bool {
+    true
+}
+
 /// Check if Accessibility permission is granted by trying to create an event tap.
 /// Unlike AXIsProcessTrusted(), this is not cached and reflects the current state.
+#[cfg(target_os = "macos")]
 fn is_accessibility_granted() -> bool {
     use core_graphics::event::{
         CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
@@ -298,6 +310,7 @@ fn is_accessibility_granted() -> bool {
 /// Calls AXIsProcessTrustedWithOptions with kAXTrustedCheckOptionPrompt=true,
 /// which makes macOS show the "App wants to control this computer" dialog
 /// if permission hasn't been granted yet.
+#[cfg(target_os = "macos")]
 pub fn check_accessibility_permission() -> bool {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {

@@ -79,7 +79,7 @@ pub mod eager;
 pub mod error;
 #[cfg(target_os = "linux")]
 pub mod hotkey;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub mod hotkey_macos;
 pub mod meeting;
 #[cfg(target_os = "macos")]
@@ -96,6 +96,8 @@ pub mod text;
 pub mod transcribe;
 pub mod tui;
 pub mod vad;
+#[cfg(windows)]
+pub mod win;
 
 pub use cli::{
     Cli, Commands, CompositorType, ConfigAction, InfoAction, MeetingAction, OutputModeOverride,

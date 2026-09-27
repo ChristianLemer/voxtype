@@ -10,9 +10,12 @@
 //! time. They are reported as `InstallKind::Source` and switching is not
 //! applicable.
 
+#[cfg(windows)]
+use crate::win::fs::{symlink, PermissionsExt};
 use serde::Serialize;
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;

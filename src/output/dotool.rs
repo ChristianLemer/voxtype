@@ -126,6 +126,12 @@ impl DotoolOutput {
     /// the other end. A crashed daemon leaves the FIFO on disk; the
     /// kernel returns ENXIO from a non-blocking write-open in that case,
     /// so we cleanly fall back to direct `dotool`.
+    #[cfg(windows)]
+    fn daemon_pipe_path() -> Option<PathBuf> {
+        None
+    }
+
+    #[cfg(unix)]
     fn daemon_pipe_path() -> Option<PathBuf> {
         use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
         let path = std::env::var("DOTOOL_PIPE")

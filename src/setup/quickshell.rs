@@ -30,8 +30,11 @@
 //! (or `~/.local/bin/voxtype-audio-bridge`). Refuses to write outside
 //! `$HOME` without `--force`.
 
+#[cfg(windows)]
+use crate::win::fs as unix_fs;
 use std::env;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 

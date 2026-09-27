@@ -51,8 +51,11 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use tokio::io::AsyncReadExt;
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::time::sleep;
+#[cfg(windows)]
+use voxtype::win::net::UnixStream;
 
 use voxtype::audio::levels::{default_socket_path, AudioFrame, FRAME_BYTES};
 

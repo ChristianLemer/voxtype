@@ -52,11 +52,14 @@
 //! since the alternative is a permanently broken socket.
 
 use crate::config::Config;
+#[cfg(windows)]
+use crate::win::net::{UnixListener, UnixStream};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
