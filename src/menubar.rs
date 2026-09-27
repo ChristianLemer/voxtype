@@ -334,9 +334,22 @@ fn restart_daemon() {
         let _ = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/F"])
             .status();
-    }
 
-    std::thread::sleep(Duration::from_millis(500));
+        // A daemon started as administrator cannot be killed from here.
+        // Starting another would only be refused by its instance guard, so
+        // say why instead of failing silently.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while crate::daemon_status::is_running(pid) {
+            if Instant::now() > deadline {
+                notify(
+                    "Voxtype",
+                    "Could not stop the running daemon (was it started as administrator?)",
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 
     voxtype_cmd(&["daemon"]);
 }
