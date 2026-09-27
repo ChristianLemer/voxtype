@@ -571,6 +571,13 @@ pub fn run(state_file: PathBuf) -> ! {
     println!("State file: {}", state_file.display());
 
     // Single instance check
+    #[cfg(windows)]
+    let _instance_guard =
+        crate::win::process::single_instance("voxtype-menubar").unwrap_or_else(|| {
+            eprintln!("Error: Another voxtype menubar instance is already running.");
+            std::process::exit(1);
+        });
+
     let lock_path = Config::runtime_dir().join("menubar.lock");
     let lock_path_str = lock_path.to_string_lossy().to_string();
     let mut pidlock = Pidlock::new(&lock_path_str);

@@ -3037,6 +3037,14 @@ impl Daemon {
         }
 
         // Check if another instance is already running (single-instance safeguard)
+        #[cfg(windows)]
+        let _instance_guard =
+            crate::win::process::single_instance("voxtype-daemon").ok_or_else(|| {
+                crate::error::VoxtypeError::Config(
+                    "Another voxtype instance is already running".to_string(),
+                )
+            })?;
+
         let lock_path = Config::runtime_dir().join("voxtype.lock");
         let lock_path_str = lock_path.to_string_lossy().to_string();
         let mut pidlock = Pidlock::new(&lock_path_str);
