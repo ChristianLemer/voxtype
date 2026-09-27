@@ -12,6 +12,9 @@
 //! 5. clipboard (wl-copy) - Wayland clipboard fallback
 //! 6. xclip - X11 clipboard fallback
 //!
+//! Windows:
+//! 1. sendinput - Native SendInput API, Unicode keystrokes (layout-independent)
+//!
 //! macOS:
 //! 1. cgevent - Native CGEvent API for keyboard simulation (best performance)
 //! 2. osascript - AppleScript fallback
@@ -33,6 +36,8 @@ pub mod paste;
 #[cfg(target_os = "macos")]
 pub mod pbcopy;
 pub mod post_process;
+#[cfg(windows)]
+pub mod sendinput;
 pub mod session;
 pub mod streaming;
 pub mod wtype;
@@ -246,7 +251,7 @@ pub trait TextOutput: Send + Sync {
 }
 
 /// Default driver order for type mode
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 const DEFAULT_DRIVER_ORDER: &[OutputDriver] = &[
     OutputDriver::Wtype,
     OutputDriver::Eitype,
@@ -257,7 +262,7 @@ const DEFAULT_DRIVER_ORDER: &[OutputDriver] = &[
 ];
 
 /// Create a TextOutput implementation for a specific driver
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn create_driver_output(
     driver: OutputDriver,
     config: &OutputConfig,
@@ -313,7 +318,7 @@ pub fn create_output_chain_with_override(
     driver_override: Option<&[OutputDriver]>,
 ) -> Vec<Box<dyn TextOutput>> {
     let mut chain: Vec<Box<dyn TextOutput>> = Vec::new();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     let _ = driver_override;
 
     // Get effective pre_type_delay_ms (handles deprecated wtype_delay_ms)
@@ -346,7 +351,18 @@ pub fn create_output_chain_with_override(
                 }
             }
 
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(windows)]
+            {
+                // driver_order not yet supported on Windows
+                chain.push(Box::new(sendinput::SendInputOutput::new(
+                    config.type_delay_ms,
+                    pre_type_delay_ms,
+                    config.auto_submit,
+                    config.append_text.clone(),
+                )));
+            }
+
+            #[cfg(not(any(target_os = "macos", windows)))]
             {
                 // Determine driver order: CLI override > config > default
                 let driver_order: &[OutputDriver] = driver_override
@@ -631,6 +647,7 @@ mod tests {
         let _result = find_ydotool_socket();
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_find_ydotool_socket_respects_env_override() {
         use std::os::unix::net::UnixListener;

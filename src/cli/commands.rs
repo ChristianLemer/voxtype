@@ -10,8 +10,8 @@ pub enum Commands {
     /// Run as daemon (default if no command specified)
     Daemon,
 
-    /// Run menu bar helper (macOS)
-    #[cfg(target_os = "macos")]
+    /// Run menu bar / notification area helper (macOS, Windows)
+    #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
     /// Launch daemon + menubar (used by Voxtype.app bundle)

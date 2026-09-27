@@ -159,7 +159,9 @@ tray-icon = "0.21.3"
 
 [target.'cfg(windows)'.dependencies]
 rdev = "0.5.3"  # global hotkey, shared with macOS via src/hotkey_macos.rs
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+tao = "0.32"  # event loop for the notification-area icon (src/menubar.rs)
+tray-icon = "0.21.3"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Input handling (evdev for kernel-level key events)

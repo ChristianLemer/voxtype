@@ -3,7 +3,7 @@
 //! subcommand handler lives in its own file.
 
 use std::path::PathBuf;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use voxtype::menubar;
 #[cfg(windows)]
 use voxtype::win::libc_compat as libc;
@@ -73,7 +73,7 @@ pub(crate) async fn dispatch(
             let mut daemon = daemon::Daemon::new(config, config_path);
             daemon.run().await?;
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         Commands::Menubar => {
             let state_file = config
                 .resolve_state_file()

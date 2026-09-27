@@ -1,4 +1,4 @@
-//! macOS menu bar integration
+//! macOS menu bar / Windows notification area integration
 //!
 //! Provides a system tray icon showing voxtype status with a context menu
 //! for controlling recording and configuring settings.
@@ -44,6 +44,30 @@ impl VoxtypeState {
         }
     }
 
+    /// Filled disc in the state's colour. Windows tray icons are images only;
+    /// the emoji title macOS shows has no Windows counterpart.
+    #[cfg(windows)]
+    fn tray_image(&self) -> tray_icon::Icon {
+        const SIZE: u32 = 32;
+        let (r, g, b) = match self {
+            VoxtypeState::Idle => (0x3c, 0xb3, 0x71),
+            VoxtypeState::Recording => (0xe0, 0x30, 0x30),
+            VoxtypeState::Transcribing => (0xf0, 0xa0, 0x20),
+            VoxtypeState::Stopped => (0x80, 0x80, 0x80),
+        };
+        let centre = (SIZE as f32 - 1.0) / 2.0;
+        let radius = SIZE as f32 / 2.0 - 1.0;
+        let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let d = ((x as f32 - centre).powi(2) + (y as f32 - centre).powi(2)).sqrt();
+                let alpha = (radius - d + 0.5).clamp(0.0, 1.0);
+                rgba.extend_from_slice(&[r, g, b, (alpha * 255.0) as u8]);
+            }
+        }
+        tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("icon buffer matches its size")
+    }
+
     fn status_text(&self) -> &'static str {
         match self {
             VoxtypeState::Idle => "Status: Ready",
@@ -79,10 +103,14 @@ mod menu_ids {
     // Utilities
     pub const DOWNLOAD_MODEL: &str = "download_model";
     pub const OPEN_CONFIG: &str = "open_config";
+    #[cfg(target_os = "macos")]
     pub const VIEW_LOGS: &str = "view_logs";
     pub const RESTART_DAEMON: &str = "restart_daemon";
+    #[cfg(windows)]
+    pub const SETTINGS: &str = "settings";
 
     // Auto-start
+    #[cfg(target_os = "macos")]
     pub const AUTOSTART_ENABLE: &str = "autostart_enable";
 
     // Quit
@@ -100,7 +128,10 @@ fn read_state_from_file(path: &PathBuf) -> VoxtypeState {
 fn get_voxtype_path() -> PathBuf {
     std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("voxtype")))
+        .and_then(|p| {
+            p.parent()
+                .map(|d| d.join(format!("voxtype{}", std::env::consts::EXE_SUFFIX)))
+        })
         .filter(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from("voxtype"))
 }
@@ -121,12 +152,31 @@ fn voxtype_cmd_wait(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// Open a file or folder with the default application
+#[cfg(windows)]
+fn open_path(path: &str) {
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+}
+
+/// Open a command in a new console window
+#[cfg(windows)]
+fn open_console(args: &[&str]) {
+    let voxtype_path = get_voxtype_path();
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "Voxtype", "cmd", "/k"])
+        .arg(voxtype_path)
+        .args(args)
+        .spawn();
+}
+
 /// Open a file or URL with the default application
+#[cfg(target_os = "macos")]
 fn open_path(path: &str) {
     let _ = std::process::Command::new("open").arg(path).spawn();
 }
 
 /// Check if LaunchAgent is installed
+#[cfg(target_os = "macos")]
 fn is_autostart_enabled() -> bool {
     let home = dirs::home_dir().unwrap_or_default();
     let plist = home.join("Library/LaunchAgents/io.voxtype.daemon.plist");
@@ -275,6 +325,24 @@ fn set_model(model_name: &str, is_parakeet: bool) -> bool {
 }
 
 /// Restart the daemon
+///
+/// Stops it by PID: matching on the image name would also kill this process,
+/// which is the same voxtype.exe.
+#[cfg(windows)]
+fn restart_daemon() {
+    if let Some(pid) = crate::daemon_status::read_pid_if_alive() {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status();
+    }
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    voxtype_cmd(&["daemon"]);
+}
+
+/// Restart the daemon
+#[cfg(target_os = "macos")]
 fn restart_daemon() {
     // Try launchctl first
     let _ = std::process::Command::new("launchctl")
@@ -292,6 +360,15 @@ fn restart_daemon() {
 }
 
 /// Show notification
+///
+/// `tray-icon` has no balloon API; the message goes to the menubar's console.
+#[cfg(windows)]
+fn notify(title: &str, message: &str) {
+    println!("{}: {}", title, message);
+}
+
+/// Show notification
+#[cfg(target_os = "macos")]
 fn notify(title: &str, message: &str) {
     let _ = std::process::Command::new("osascript")
         .args([
@@ -437,17 +514,20 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
     menu.append(&hotkey_menu).unwrap();
 
     // Auto-start submenu
-    let autostart_menu = Submenu::new("Auto-start", true);
-    let autostart_enabled = is_autostart_enabled();
-    let enable_item = CheckMenuItem::with_id(
-        menu_ids::AUTOSTART_ENABLE,
-        "Start at Login",
-        true,
-        autostart_enabled,
-        None,
-    );
-    autostart_menu.append(&enable_item).unwrap();
-    menu.append(&autostart_menu).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let autostart_menu = Submenu::new("Auto-start", true);
+        let autostart_enabled = is_autostart_enabled();
+        let enable_item = CheckMenuItem::with_id(
+            menu_ids::AUTOSTART_ENABLE,
+            "Start at Login",
+            true,
+            autostart_enabled,
+            None,
+        );
+        autostart_menu.append(&enable_item).unwrap();
+        menu.append(&autostart_menu).unwrap();
+    }
 
     menu.append(&PredefinedMenuItem::separator()).unwrap();
 
@@ -459,11 +539,19 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
 
     // Utilities
     let config_item = MenuItem::with_id(menu_ids::OPEN_CONFIG, "Edit Config File...", true, None);
-    let logs_item = MenuItem::with_id(menu_ids::VIEW_LOGS, "View Logs", true, None);
     let restart_item = MenuItem::with_id(menu_ids::RESTART_DAEMON, "Restart Daemon", true, None);
 
+    #[cfg(windows)]
+    {
+        let settings_item = MenuItem::with_id(menu_ids::SETTINGS, "Settings...", true, None);
+        menu.append(&settings_item).unwrap();
+    }
     menu.append(&config_item).unwrap();
-    menu.append(&logs_item).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let logs_item = MenuItem::with_id(menu_ids::VIEW_LOGS, "View Logs", true, None);
+        menu.append(&logs_item).unwrap();
+    }
     menu.append(&restart_item).unwrap();
 
     menu.append(&PredefinedMenuItem::separator()).unwrap();
@@ -516,12 +604,15 @@ pub fn run(state_file: PathBuf) -> ! {
     let _ = status_item.set_text(initial_state.status_text());
 
     // Create tray icon
-    let tray = TrayIconBuilder::new()
+    let builder = TrayIconBuilder::new()
         .with_tooltip("Voxtype")
         .with_title(initial_state.icon())
-        .with_menu(Box::new(menu))
-        .build()
-        .expect("Failed to create tray icon");
+        .with_menu(Box::new(menu));
+    #[cfg(windows)]
+    let builder = builder
+        .with_icon(initial_state.tray_image())
+        .with_tooltip(initial_state.status_text());
+    let tray = builder.build().expect("Failed to create tray icon");
 
     println!("Menu bar is running. Look for the icon in your menu bar.");
     println!("Press Ctrl+C to stop.\n");
@@ -630,6 +721,7 @@ pub fn run(state_file: PathBuf) -> ! {
                 }
 
                 // Auto-start
+                #[cfg(target_os = "macos")]
                 menu_ids::AUTOSTART_ENABLE => {
                     if is_autostart_enabled() {
                         // Disable
@@ -645,6 +737,11 @@ pub fn run(state_file: PathBuf) -> ! {
                 }
 
                 // Utilities
+                #[cfg(windows)]
+                menu_ids::DOWNLOAD_MODEL => open_console(&["setup", "model"]),
+                #[cfg(windows)]
+                menu_ids::SETTINGS => open_console(&["configure"]),
+                #[cfg(target_os = "macos")]
                 menu_ids::DOWNLOAD_MODEL => {
                     // Open terminal with model download command
                     let voxtype_path = get_voxtype_path();
@@ -661,6 +758,7 @@ pub fn run(state_file: PathBuf) -> ! {
                         open_path(config_path.to_str().unwrap_or(""));
                     }
                 }
+                #[cfg(target_os = "macos")]
                 menu_ids::VIEW_LOGS => {
                     let home = dirs::home_dir().unwrap_or_default();
                     let log_path = home.join("Library/Logs/voxtype");
@@ -696,6 +794,11 @@ pub fn run(state_file: PathBuf) -> ! {
 
             if new_state != last_state {
                 let _ = tray.set_title(Some(new_state.icon()));
+                #[cfg(windows)]
+                {
+                    let _ = tray.set_icon(Some(new_state.tray_image()));
+                    let _ = tray.set_tooltip(Some(new_state.status_text()));
+                }
                 let _ = status_item.set_text(new_state.status_text());
                 last_state = new_state;
             }

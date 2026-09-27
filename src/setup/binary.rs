@@ -1250,6 +1250,7 @@ mod tests {
     /// filesystem, and a test that assumes one fails there for reasons that
     /// have nothing to do with the code under test. The script ignores its
     /// arguments, so it works under any `/bin/sh`, dash included.
+    #[cfg(unix)]
     #[test]
     fn verify_binary_runs_accepts_a_working_binary() {
         use std::os::unix::fs::PermissionsExt;

@@ -4992,6 +4992,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_stale_lockfile_cleanup() {
         with_test_runtime_dir(|dir| {
@@ -5009,6 +5010,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_stale_lockfile_not_cleaned_if_pid_running() {
         with_test_runtime_dir(|dir| {
