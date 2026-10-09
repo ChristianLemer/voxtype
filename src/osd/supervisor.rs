@@ -33,7 +33,11 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "linux")]
 const OSD_BINARY: &str = "voxtype-osd";
+/// No Wayland frontend outside Linux: the eframe card stands in.
+#[cfg(not(target_os = "linux"))]
+const OSD_BINARY: &str = "voxtype-osd-desktop";
 const RESTART_MIN: Duration = Duration::from_secs(1);
 const RESTART_MAX: Duration = Duration::from_secs(30);
 const HEALTHY_RUN: Duration = Duration::from_secs(60);
@@ -43,7 +47,7 @@ const RAPID_FAIL_WINDOW: Duration = Duration::from_secs(5);
 fn resolve_osd_binary() -> PathBuf {
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
-            let sibling = dir.join(OSD_BINARY);
+            let sibling = dir.join(format!("{}{}", OSD_BINARY, std::env::consts::EXE_SUFFIX));
             if sibling.is_file() {
                 return sibling;
             }

@@ -130,6 +130,8 @@ wayland-protocols-wlr = { version = "0.3", optional = true, features = ["client"
 wgpu = { version = "29", optional = true, default-features = false, features = ["vulkan", "gles", "wgsl", "std"] }
 egui = { version = "0.34", optional = true }
 egui-wgpu = { version = "0.34", optional = true, default-features = false }
+# Recording card for Windows and macOS (voxtype-osd-desktop): drawn on the CPU.
+tiny-skia = { version = "0.11", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", optional = true }
@@ -157,10 +159,17 @@ mac-notification-sys = "0.6"  # Native macOS notifications
 rdev = "0.5.3"
 tray-icon = "0.21.3"
 
+[target.'cfg(target_os = "macos")'.dependencies.eframe]
+# Shows the voxtype-osd-desktop card on macOS.
+version = "0.34"
+optional = true
+default-features = false
+features = ["glow"]
+
 [target.'cfg(windows)'.dependencies]
 tao = "0.32"  # event loop for the notification-area icon (src/menubar.rs)
 tray-icon = "0.21.3"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Graphics_Gdi"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Graphics_Gdi", "Win32_UI_HiDpi"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Input handling (evdev for kernel-level key events)
@@ -193,6 +202,8 @@ osd-native = [
     "dep:bytemuck",
 ]
 osd-gtk4 = ["dep:gtk4", "dep:gtk4-layer-shell", "dep:cairo-rs", "dep:glib"]
+# Recording card for Windows and macOS, same look as the Quickshell OSD.
+osd-desktop = ["dep:tiny-skia", "dep:eframe"]
 gpu-vulkan = ["whisper-rs/vulkan"]
 gpu-cuda = ["whisper-rs/cuda"]
 gpu-metal = ["whisper-rs/metal"]
@@ -297,6 +308,11 @@ path = "src/main.rs"
 name = "voxtype-osd-native"
 path = "src/bin/voxtype_osd_native/main.rs"
 required-features = ["osd-native"]
+
+[[bin]]
+name = "voxtype-osd-desktop"
+path = "src/bin/voxtype_osd_desktop/main.rs"
+required-features = ["osd-desktop"]
 
 [[bin]]
 name = "voxtype-osd-gtk4"

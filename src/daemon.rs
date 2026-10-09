@@ -3046,6 +3046,10 @@ impl Daemon {
             })?;
 
         let lock_path = Config::runtime_dir().join("voxtype.lock");
+        // Holding the mutex proves no other daemon runs, so a lockfile still
+        // on disk was left by a crash or a forced stop.
+        #[cfg(windows)]
+        let _ = std::fs::remove_file(&lock_path);
         let lock_path_str = lock_path.to_string_lossy().to_string();
         let mut pidlock = Pidlock::new(&lock_path_str);
 
