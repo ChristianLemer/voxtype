@@ -110,7 +110,13 @@ jobs:
           mkdir -p "releases/$VERSION"
           cp target/release/voxtype "releases/$VERSION/voxtype-$VERSION-macos-arm64"
           cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" "releases/$VERSION/"
-          ./scripts/build-macos-dmg.sh "$VERSION"
+          VOXTYPE_SKIP_DMG=1 ./scripts/build-macos-dmg.sh "$VERSION"
+          # Without a Developer ID, seal the whole bundle ad hoc. The script
+          # signs only the binary, then adds Info.plist and the nested apps,
+          # which leaves the bundle unsealed: macOS calls it "damaged".
+          codesign --force --deep --sign - "releases/$VERSION/Voxtype.app"
+          codesign --verify --deep --strict --verbose=2 "releases/$VERSION/Voxtype.app"
+          VOXTYPE_SKIP_APP=1 ./scripts/build-macos-dmg.sh "$VERSION"
           ls -la "releases/$VERSION"
 
       - uses: actions/upload-artifact@v4
