@@ -74,6 +74,10 @@ pub(crate) async fn dispatch(
             daemon.run().await?;
         }
         #[cfg(any(target_os = "macos", windows))]
+        Commands::OsdCard => {
+            voxtype::osd::desktop::run(config_path.as_deref())?;
+        }
+        #[cfg(any(target_os = "macos", windows))]
         Commands::Menubar => {
             let state_file = config
                 .resolve_state_file()

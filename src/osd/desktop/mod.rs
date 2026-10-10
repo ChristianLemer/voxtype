@@ -1,10 +1,14 @@
-//! `voxtype-osd-desktop` — the recording card for Windows and macOS.
+//! The recording card for Windows and macOS (`voxtype osd-card`).
 //!
 //! The same card as the Quickshell frontend on Omarchy, for desktops without
-//! Wayland. The card is drawn on the CPU (`card`), so it needs no GPU and runs
-//! in virtual machines and remote sessions; a small presenter per platform puts
+//! Wayland. It is drawn on the CPU (`card`), so it needs no GPU and runs in
+//! virtual machines and remote sessions; a small presenter per platform puts
 //! the image on screen in a window that never takes focus, since voxtype types
 //! into whatever window has it.
+//!
+//! It runs in its own process, which the daemon's OSD supervisor starts from
+//! the voxtype executable itself: a crash here never stops dictation, and
+//! there is still a single file to ship.
 //!
 //! Audio frames arrive over the daemon's level socket (a named pipe on
 //! Windows); the daemon state comes from its state file. While the daemon is
@@ -20,33 +24,17 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use clap::Parser;
-
-use voxtype::audio::levels::{AudioFrame, FRAME_HZ};
-use voxtype::osd::config::OsdConfig;
-use voxtype::osd::ipc::{resolve_socket_path, run_ipc_loop, FrameRing};
-use voxtype::osd::theme::load_palette;
-use voxtype::osd::visual::{peak_meter_fraction, project_envelope, Color, Palette, PeakHold};
+use crate::audio::levels::{AudioFrame, FRAME_HZ};
+use crate::osd::config::OsdConfig;
+use crate::osd::ipc::{resolve_socket_path, run_ipc_loop, FrameRing};
+use crate::osd::theme::load_palette;
+use crate::osd::visual::{peak_meter_fraction, project_envelope, Color, Palette, PeakHold};
 
 /// How often the state file is re-read.
 pub const STATE_POLL: Duration = Duration::from_millis(80);
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "voxtype-osd-desktop",
-    version,
-    about = "Voxtype recording card for Windows and macOS"
-)]
-struct Args {
-    #[arg(long, env = "VOXTYPE_CONFIG")]
-    config: Option<PathBuf>,
-
-    #[arg(long, env = "VOXTYPE_OSD_SOCKET")]
-    socket: Option<PathBuf>,
-
-    #[arg(long, default_value = "1.0", env = "VOXTYPE_OSD_RECONNECT_SECS")]
-    reconnect_secs: f32,
-}
+/// Pause between reconnection attempts to the daemon's level socket.
+const RECONNECT_SECS: f32 = 1.0;
 
 fn load_config(explicit: Option<&std::path::Path>) -> (OsdConfig, Option<PathBuf>) {
     #[derive(serde::Deserialize, Default)]
@@ -58,13 +46,13 @@ fn load_config(explicit: Option<&std::path::Path>) -> (OsdConfig, Option<PathBuf
     }
     let path = explicit
         .map(std::path::Path::to_path_buf)
-        .or_else(voxtype::config::Config::default_path);
+        .or_else(crate::config::Config::default_path);
     let partial: Partial = path
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default();
     let state_file = match partial.state_file.as_deref() {
-        None | Some("auto") => Some(voxtype::config::Config::runtime_dir().join("state")),
+        None | Some("auto") => Some(crate::config::Config::runtime_dir().join("state")),
         Some("disabled" | "none" | "off" | "false") => None,
         Some(p) => Some(PathBuf::from(p)),
     };
@@ -194,17 +182,10 @@ fn spawn_ipc(feed: Arc<Feed>, socket_path: PathBuf, reconnect_secs: f32) {
     });
 }
 
-fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
-    let args = Args::parse();
-    let (config, state_file) = load_config(args.config.as_deref());
+/// Show the card until the process is stopped. `config` overrides the
+/// default config file.
+pub fn run(config: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let (config, state_file) = load_config(config);
     if !config.enabled {
         tracing::info!("OSD disabled in config; exiting");
         return Ok(());
@@ -215,11 +196,7 @@ fn main() -> anyhow::Result<()> {
         peak_hold: Mutex::new(PeakHold::new(config.peak_decay_db_per_sec)),
         last_frame: Mutex::new(Instant::now() - Duration::from_secs(10)),
     });
-    spawn_ipc(
-        feed.clone(),
-        resolve_socket_path(args.socket),
-        args.reconnect_secs,
-    );
+    spawn_ipc(feed.clone(), resolve_socket_path(None), RECONNECT_SECS);
 
     let model = Model {
         feed,
@@ -235,9 +212,4 @@ fn main() -> anyhow::Result<()> {
     return windows::run(model);
     #[cfg(target_os = "macos")]
     return macos::run(model);
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        let _ = model;
-        anyhow::bail!("voxtype-osd-desktop runs on Windows and macOS; on Linux use voxtype-osd")
-    }
 }

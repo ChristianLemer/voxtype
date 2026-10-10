@@ -1,7 +1,7 @@
 name: Build desktop
 
-# Builds voxtype with Parakeet (CoreML on macOS) and the recording card
-# (osd-desktop) on Windows, macOS and Linux, and keeps the binaries as workflow artifacts.
+# Builds voxtype with Parakeet (CoreML on macOS) on Windows, macOS and
+# Linux, and keeps the binaries as workflow artifacts.
 # Nothing is published: there is no release step.
 
 on:
@@ -30,7 +30,7 @@ jobs:
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
-        run: cargo build --release --features parakeet,osd-desktop
+        run: cargo build --release --features parakeet
 
       - name: Test the Windows-specific modules
         shell: pwsh
@@ -50,9 +50,6 @@ jobs:
           name: voxtype-windows-x86_64
           path: |
             target/release/voxtype.exe
-            target/release/voxtype-osd-desktop.exe
-            target/release/DirectML.dll
-          if-no-files-found: warn
 
   macos:
     runs-on: macos-14  # Apple Silicon
@@ -60,8 +57,8 @@ jobs:
       # ONNX Runtime that ort 2.0.0-rc.12 binds against; keep in step with
       # scripts/build-macos.sh.
       ORT_VERSION: '1.24.2'
-      # Same engine set as the upstream DMG, plus the recording card.
-      FEATURES: gpu-metal,parakeet-coreml,moonshine,sensevoice,paraformer,dolphin,omnilingual,cohere,osd-desktop
+      # Same engine set as the upstream DMG.
+      FEATURES: gpu-metal,parakeet-coreml,moonshine,sensevoice,paraformer,dolphin,omnilingual,cohere
     steps:
       - uses: actions/checkout@v4
 
@@ -86,18 +83,16 @@ jobs:
           ORT_PREFER_DYNAMIC_LINK: '1'
         run: ORT_LIB_LOCATION="$ORT_LIB_DIR" cargo build --release --features "$FEATURES"
 
-      # Plain binaries, no .app: each looks for the dylib in its own folder.
+      # Plain binary, no .app: it looks for the dylib in its own folder.
       # install_name_tool voids the signature, and Apple Silicon kills
-      # unsigned code, so both are re-signed ad hoc.
+      # unsigned code, so it is re-signed ad hoc.
       - name: Stage
         run: |
           mkdir dist
-          cp target/release/voxtype target/release/voxtype-osd-desktop dist/
+          cp target/release/voxtype dist/
           cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" dist/
-          for bin in dist/voxtype dist/voxtype-osd-desktop; do
-            install_name_tool -add_rpath @executable_path "$bin"
-            codesign --force --sign - "$bin"
-          done
+          install_name_tool -add_rpath @executable_path dist/voxtype
+          codesign --force --sign - dist/voxtype
           otool -L dist/voxtype | grep -i onnx
 
       - name: Smoke test
@@ -107,8 +102,7 @@ jobs:
 
       # Upstream's script assembles Voxtype.app (Swift menubar and setup
       # apps, the binary, ONNX Runtime in Frameworks) and the DMG. The
-      # recording card goes next to the daemon binary, where the OSD
-      # supervisor looks for it, before the DMG is cut.
+      # recording card is a subcommand of the binary, so nothing is added.
       - name: Build Voxtype.app and DMG
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
@@ -116,14 +110,7 @@ jobs:
           mkdir -p "releases/$VERSION"
           cp target/release/voxtype "releases/$VERSION/voxtype-$VERSION-macos-arm64"
           cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" "releases/$VERSION/"
-          VOXTYPE_SKIP_DMG=1 ./scripts/build-macos-dmg.sh "$VERSION"
-
-          APP="releases/$VERSION/Voxtype.app"
-          cp target/release/voxtype-osd-desktop "$APP/Contents/MacOS/"
-          install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/voxtype-osd-desktop"
-          codesign --force --sign - "$APP/Contents/MacOS/voxtype-osd-desktop"
-
-          VOXTYPE_SKIP_APP=1 ./scripts/build-macos-dmg.sh "$VERSION"
+          ./scripts/build-macos-dmg.sh "$VERSION"
           ls -la "releases/$VERSION"
 
       - uses: actions/upload-artifact@v4

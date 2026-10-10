@@ -7,7 +7,7 @@
 
 use tiny_skia::{FillRule, LineCap, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-use voxtype::osd::visual::{peak_meter_fraction, Color, EnvelopeColumn, MeterZone, Palette};
+use crate::osd::visual::{peak_meter_fraction, Color, EnvelopeColumn, MeterZone, Palette};
 
 /// Room around the card for the glow, in logical pixels.
 pub const GLOW_PAD: f32 = 20.0;

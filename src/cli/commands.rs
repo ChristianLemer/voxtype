@@ -14,6 +14,11 @@ pub enum Commands {
     #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
+    /// Show the recording card (started by the daemon on Windows and macOS)
+    #[cfg(any(target_os = "macos", windows))]
+    #[command(hide = true)]
+    OsdCard,
+
     /// Launch daemon + menubar (used by Voxtype.app bundle)
     #[cfg(target_os = "macos")]
     #[command(hide = true)]

@@ -12,8 +12,11 @@
 //! - [`visual`] — peak-hold decay, waveform envelope helpers, palette types.
 //! - [`config`] — `[osd]` config block (`OsdConfig`).
 //! - [`theme`] — Omarchy theme parsing + change watcher.
+//! - `desktop` — the recording card for Windows and macOS (`voxtype osd-card`).
 
 pub mod config;
+#[cfg(any(windows, target_os = "macos"))]
+pub mod desktop;
 pub mod ipc;
 pub mod style;
 pub mod supervisor;

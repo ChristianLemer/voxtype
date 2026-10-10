@@ -35,25 +35,47 @@ use tokio::task::JoinHandle;
 
 #[cfg(target_os = "linux")]
 const OSD_BINARY: &str = "voxtype-osd";
-/// No Wayland frontend outside Linux: the eframe card stands in.
-#[cfg(not(target_os = "linux"))]
-const OSD_BINARY: &str = "voxtype-osd-desktop";
 const RESTART_MIN: Duration = Duration::from_secs(1);
 const RESTART_MAX: Duration = Duration::from_secs(30);
 const HEALTHY_RUN: Duration = Duration::from_secs(60);
 const RAPID_FAIL_THRESHOLD: u32 = 3;
 const RAPID_FAIL_WINDOW: Duration = Duration::from_secs(5);
 
+#[cfg(target_os = "linux")]
 fn resolve_osd_binary() -> PathBuf {
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
-            let sibling = dir.join(format!("{}{}", OSD_BINARY, std::env::consts::EXE_SUFFIX));
+            let sibling = dir.join(OSD_BINARY);
             if sibling.is_file() {
                 return sibling;
             }
         }
     }
     PathBuf::from(OSD_BINARY)
+}
+
+/// Outside Linux the card is a subcommand of this very executable
+/// (`voxtype osd-card`), run as a separate process so a crash in it never
+/// takes dictation down.
+#[cfg(not(target_os = "linux"))]
+fn resolve_osd_binary() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("voxtype"))
+}
+
+#[cfg(target_os = "linux")]
+fn osd_command(binary: &std::path::Path) -> Command {
+    Command::new(binary)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn osd_command(binary: &std::path::Path) -> Command {
+    let mut cmd = Command::new(binary);
+    cmd.arg("osd-card");
+    // voxtype.exe is a console program; without this a daemon started in
+    // the background would open a console window for the card.
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
 }
 
 /// Spawn a tokio task that supervises `voxtype-osd`. The returned handle's
@@ -71,7 +93,7 @@ async fn supervise() {
     loop {
         let started = Instant::now();
         let osd_binary = resolve_osd_binary();
-        let mut cmd = Command::new(&osd_binary);
+        let mut cmd = osd_command(&osd_binary);
         cmd.kill_on_drop(true);
         // Tell the dispatcher this child is supervised. The dispatcher
         // uses this to suppress qs's daemonize fork when handing off to
