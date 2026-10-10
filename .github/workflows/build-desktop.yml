@@ -1,7 +1,7 @@
 name: Build desktop
 
-# Builds voxtype with Parakeet and the recording card (osd-desktop) on
-# Windows, macOS and Linux, and keeps the binaries as workflow artifacts.
+# Builds voxtype with Parakeet (CoreML on macOS) and the recording card
+# (osd-desktop) on Windows, macOS and Linux, and keeps the binaries as workflow artifacts.
 # Nothing is published: there is no release step.
 
 on:
@@ -56,6 +56,12 @@ jobs:
 
   macos:
     runs-on: macos-14  # Apple Silicon
+    env:
+      # ONNX Runtime that ort 2.0.0-rc.12 binds against; keep in step with
+      # scripts/build-macos.sh.
+      ORT_VERSION: '1.24.2'
+      # Same engine set as the upstream DMG, plus the recording card.
+      FEATURES: gpu-metal,parakeet-coreml,moonshine,sensevoice,paraformer,dolphin,omnilingual,cohere,osd-desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -65,20 +71,44 @@ jobs:
       - name: Install build tools
         run: brew install cmake
 
+      # Microsoft's prebuilt carries the CoreML execution provider; linked
+      # dynamically, as scripts/build-macos.sh does.
+      - name: Fetch ONNX Runtime
+        run: |
+          curl -fL --max-time 300 -o ort.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
+          tar -xzf ort.tgz
+          echo "ORT_LIB_DIR=$PWD/onnxruntime-osx-arm64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
+
       - name: Build
-        run: cargo build --release --features gpu-metal,parakeet,osd-desktop
+        env:
+          ORT_STRATEGY: system
+          ORT_PREFER_DYNAMIC_LINK: '1'
+        run: ORT_LIB_LOCATION="$ORT_LIB_DIR" cargo build --release --features "$FEATURES"
+
+      # Plain binaries, no .app: each looks for the dylib in its own folder.
+      # install_name_tool voids the signature, and Apple Silicon kills
+      # unsigned code, so both are re-signed ad hoc.
+      - name: Stage
+        run: |
+          mkdir dist
+          cp target/release/voxtype target/release/voxtype-osd-desktop dist/
+          cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" dist/
+          for bin in dist/voxtype dist/voxtype-osd-desktop; do
+            install_name_tool -add_rpath @executable_path "$bin"
+            codesign --force --sign - "$bin"
+          done
+          otool -L dist/voxtype | grep -i onnx
 
       - name: Smoke test
         run: |
-          target/release/voxtype --version
-          target/release/voxtype info engines
+          dist/voxtype --version
+          dist/voxtype info engines
 
       - uses: actions/upload-artifact@v4
         with:
           name: voxtype-macos-aarch64
-          path: |
-            target/release/voxtype
-            target/release/voxtype-osd-desktop
+          path: dist/
 
   linux:
     runs-on: ubuntu-latest
