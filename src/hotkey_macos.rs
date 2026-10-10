@@ -183,6 +183,25 @@ impl HotkeyListener for RdevHotkeyListener {
     }
 }
 
+/// macOS virtual key codes (Carbon `kVK_*`) for keys rdev 0.5 does not name.
+/// rdev reports them as `Key::Unknown(code)`, so the hotkey must too.
+mod kvk {
+    pub const F13: u32 = 105;
+    pub const F14: u32 = 107;
+    pub const F15: u32 = 113;
+    pub const F16: u32 = 106;
+    pub const F17: u32 = 64;
+    pub const F18: u32 = 79;
+    pub const F19: u32 = 80;
+    pub const F20: u32 = 90;
+    pub const HELP: u32 = 114;
+    pub const HOME: u32 = 115;
+    pub const PAGE_UP: u32 = 116;
+    pub const FORWARD_DELETE: u32 = 117;
+    pub const END: u32 = 119;
+    pub const PAGE_DOWN: u32 = 121;
+}
+
 /// Parse a key name string to rdev Key
 fn parse_key_name(name: &str) -> Option<Key> {
     match name.to_uppercase().as_str() {
@@ -223,17 +242,23 @@ fn parse_key_name(name: &str) -> Option<Key> {
         "DOWN" | "DOWNARROW" => Some(Key::DownArrow),
         "LEFT" | "LEFTARROW" => Some(Key::LeftArrow),
         "RIGHT" | "RIGHTARROW" => Some(Key::RightArrow),
-        "HOME" => Some(Key::Home),
-        "END" => Some(Key::End),
-        "PAGEUP" => Some(Key::PageUp),
-        "PAGEDOWN" => Some(Key::PageDown),
+        "HOME" => Some(Key::Unknown(kvk::HOME)),
+        "END" => Some(Key::Unknown(kvk::END)),
+        "PAGEUP" => Some(Key::Unknown(kvk::PAGE_UP)),
+        "PAGEDOWN" => Some(Key::Unknown(kvk::PAGE_DOWN)),
 
-        // Other
-        "DELETE" => Some(Key::Delete),
-        "INSERT" => Some(Key::Insert),
-        "PAUSE" => Some(Key::Pause),
-        "SCROLLLOCK" => Some(Key::ScrollLock),
-        "PRINTSCREEN" => Some(Key::PrintScreen),
+        // Other. macOS has no Print Screen, Scroll Lock or Pause: a PC
+        // keyboard's keys arrive as F13, F14 and F15, and Insert as Help.
+        "DELETE" | "FORWARDDELETE" => Some(Key::Unknown(kvk::FORWARD_DELETE)),
+        "INSERT" | "HELP" => Some(Key::Unknown(kvk::HELP)),
+        "F13" | "PRINTSCREEN" => Some(Key::Unknown(kvk::F13)),
+        "F14" | "SCROLLLOCK" => Some(Key::Unknown(kvk::F14)),
+        "F15" | "PAUSE" => Some(Key::Unknown(kvk::F15)),
+        "F16" => Some(Key::Unknown(kvk::F16)),
+        "F17" => Some(Key::Unknown(kvk::F17)),
+        "F18" => Some(Key::Unknown(kvk::F18)),
+        "F19" => Some(Key::Unknown(kvk::F19)),
+        "F20" => Some(Key::Unknown(kvk::F20)),
         "FN" | "FUNCTION" | "GLOBE" => Some(Key::Function),
 
         // Letters (for completeness, though unusual for hotkeys)
@@ -327,7 +352,9 @@ mod tests {
         assert_eq!(parse_key_name("RIGHTALT"), Some(Key::AltGr));
         assert_eq!(parse_key_name("rightoption"), Some(Key::AltGr));
         assert_eq!(parse_key_name("CMD"), Some(Key::MetaLeft));
-        assert_eq!(parse_key_name("SCROLLLOCK"), Some(Key::ScrollLock));
+        assert_eq!(parse_key_name("SCROLLLOCK"), Some(Key::Unknown(107)));
+        assert_eq!(parse_key_name("PAUSE"), parse_key_name("F15"));
+        assert_eq!(parse_key_name("pagedown"), Some(Key::Unknown(121)));
         assert_eq!(parse_key_name("UNKNOWN"), None);
     }
 }
