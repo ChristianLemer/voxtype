@@ -12,7 +12,9 @@ on:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    # windows-latest ships a Visual Studio the cmake crate used by whisper-rs-sys
+    # does not recognise yet; 2022 matches the toolchain this port is built with.
+    runs-on: windows-2022
     steps:
       # A git dependency (openvino-rs) has paths past MAX_PATH.
       - name: Allow long paths
