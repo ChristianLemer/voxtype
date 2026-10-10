@@ -105,6 +105,32 @@ jobs:
           dist/voxtype --version
           dist/voxtype info engines
 
+      # Upstream's script assembles Voxtype.app (Swift menubar and setup
+      # apps, the binary, ONNX Runtime in Frameworks) and the DMG. The
+      # recording card goes next to the daemon binary, where the OSD
+      # supervisor looks for it, before the DMG is cut.
+      - name: Build Voxtype.app and DMG
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p "releases/$VERSION"
+          cp target/release/voxtype "releases/$VERSION/voxtype-$VERSION-macos-arm64"
+          cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" "releases/$VERSION/"
+          VOXTYPE_SKIP_DMG=1 ./scripts/build-macos-dmg.sh "$VERSION"
+
+          APP="releases/$VERSION/Voxtype.app"
+          cp target/release/voxtype-osd-desktop "$APP/Contents/MacOS/"
+          install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/voxtype-osd-desktop"
+          codesign --force --sign - "$APP/Contents/MacOS/voxtype-osd-desktop"
+
+          VOXTYPE_SKIP_APP=1 ./scripts/build-macos-dmg.sh "$VERSION"
+          ls -la "releases/$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxtype-macos-aarch64-dmg
+          path: releases/${{ env.VERSION }}/*.dmg
+
       - uses: actions/upload-artifact@v4
         with:
           name: voxtype-macos-aarch64
