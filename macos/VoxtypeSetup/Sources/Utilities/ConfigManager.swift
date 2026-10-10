@@ -7,7 +7,7 @@ class ConfigManager {
     private let configPath: String
 
     private init() {
-        configPath = NSHomeDirectory() + "/Library/Application Support/voxtype/config.toml"
+        configPath = VoxtypePaths.configFile
     }
 
     /// Read config file and return key-value pairs
@@ -87,6 +87,16 @@ class ConfigManager {
             let newContent = addKeyToSection(content: lines.joined(separator: "\n"), section: section, key: key, value: value)
             try? newContent.write(toFile: configPath, atomically: true, encoding: .utf8)
             return
+        }
+
+        // A top-level key must go before the first section header, or TOML
+        // would read it as part of that section
+        if !foundAndReplaced {
+            let firstSection = lines.firstIndex { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                return trimmed.hasPrefix("[") && trimmed.hasSuffix("]")
+            } ?? lines.count
+            lines.insert("\(key) = \(value)", at: firstSection)
         }
 
         let newContent = lines.joined(separator: "\n")

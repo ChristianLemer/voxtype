@@ -11,7 +11,7 @@ struct AdvancedSettingsView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Text("Configuration File")
-                        Text("~/Library/Application Support/voxtype/config.toml")
+                        Text(VoxtypePaths.display(VoxtypePaths.configFile))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -41,7 +41,7 @@ struct AdvancedSettingsView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Text("Models Folder")
-                        Text("~/Library/Application Support/voxtype/models/")
+                        Text(VoxtypePaths.display(VoxtypePaths.modelsDir))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -149,24 +149,24 @@ struct AdvancedSettingsView: View {
     }
 
     private func startDaemon() {
-        VoxtypeCLI.run(["daemon"], wait: false)
+        VoxtypeCLI.launchApp()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             checkDaemonStatus()
         }
     }
 
     private func openConfigFile() {
-        let path = NSHomeDirectory() + "/Library/Application Support/voxtype/config.toml"
+        let path = VoxtypePaths.configFile
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     private func openLogsFolder() {
-        let path = NSHomeDirectory() + "/Library/Logs/voxtype"
+        let path = VoxtypePaths.logsDir
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     private func openModelsFolder() {
-        let path = NSHomeDirectory() + "/Library/Application Support/voxtype/models"
+        let path = VoxtypePaths.modelsDir
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
@@ -184,17 +184,15 @@ struct AdvancedSettingsView: View {
     }
 
     private func restartDaemon() {
-        let task = Process()
-        task.launchPath = "/bin/launchctl"
-        task.arguments = ["kickstart", "-k", "gui/\(getuid())/io.voxtype.daemon"]
-        try? task.run()
+        VoxtypeCLI.restartDaemon {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                checkDaemonStatus()
+            }
+        }
     }
 
     private func stopDaemon() {
-        let task = Process()
-        task.launchPath = "/bin/launchctl"
-        task.arguments = ["stop", "io.voxtype.daemon"]
-        try? task.run()
+        VoxtypeCLI.stopApp()
     }
 
     private func runSetupCheck() {

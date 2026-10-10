@@ -2,21 +2,25 @@ import Foundation
 
 /// Helper to run voxtype CLI commands
 enum VoxtypeCLI {
+    /// Voxtype.app: the bundle this app is embedded in
+    /// (Voxtype.app/Contents/MacOS/VoxtypeSetup.app), else /Applications.
+    static var appBundlePath: String {
+        let enclosing = Bundle.main.bundleURL
+            .deletingLastPathComponent()  // MacOS
+            .deletingLastPathComponent()  // Contents
+            .deletingLastPathComponent()  // Voxtype.app
+        if enclosing.pathExtension == "app"
+            && FileManager.default.fileExists(atPath: enclosing.appendingPathComponent("Contents/MacOS/voxtype-bin").path) {
+            return enclosing.path
+        }
+        return "/Applications/Voxtype.app"
+    }
+
     /// Path to voxtype binary
     static var binaryPath: String {
-        // First try the app bundle location (works for both VoxtypeMenubar.app and VoxtypeSetup.app)
-        let bundlePath = Bundle.main.bundlePath
-        let parentDir = (bundlePath as NSString).deletingLastPathComponent
-        let siblingBinaryPath = (parentDir as NSString).appendingPathComponent("Voxtype.app/Contents/MacOS/voxtype")
-
-        if FileManager.default.fileExists(atPath: siblingBinaryPath) {
-            return siblingBinaryPath
-        }
-
-        // Try /Applications
-        let applicationsPath = "/Applications/Voxtype.app/Contents/MacOS/voxtype"
-        if FileManager.default.fileExists(atPath: applicationsPath) {
-            return applicationsPath
+        let bundled = appBundlePath + "/Contents/MacOS/voxtype-bin"
+        if FileManager.default.fileExists(atPath: bundled) {
+            return bundled
         }
 
         // Try homebrew symlink
@@ -75,36 +79,37 @@ enum VoxtypeCLI {
         return status == "idle" || status == "recording" || status == "transcribing"
     }
 
-    /// Restart the daemon (stop, clean up, start fresh)
+    /// Start Voxtype.app, which runs the daemon and the menu bar icon.
+    static func launchApp() {
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = [appBundlePath]
+        try? task.run()
+    }
+
+    /// Stop Voxtype.app: the menu bar process, the daemon and the
+    /// recording card all run from its voxtype-bin.
+    static func stopApp() {
+        let task = Process()
+        task.launchPath = "/usr/bin/pkill"
+        task.arguments = ["-f", appBundlePath + "/Contents/MacOS/voxtype-bin"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+    }
+
+    /// Restart the daemon by restarting Voxtype.app, so the menu bar icon
+    /// comes back with it.
     static func restartDaemon(completion: (() -> Void)? = nil) {
         DispatchQueue.global().async {
-            // Kill daemon with SIGKILL to ensure it stops
-            let killTask = Process()
-            killTask.launchPath = "/usr/bin/pkill"
-            killTask.arguments = ["-9", "voxtype"]
-            killTask.standardOutput = FileHandle.nullDevice
-            killTask.standardError = FileHandle.nullDevice
-            try? killTask.run()
-            killTask.waitUntilExit()
+            stopApp()
 
-            // Wait for process to fully terminate
-            Thread.sleep(forTimeInterval: 0.5)
+            // Give the processes time to exit and release the lock
+            Thread.sleep(forTimeInterval: 1.0)
 
-            // Clean up lock and state files
-            let rmTask = Process()
-            rmTask.launchPath = "/bin/rm"
-            rmTask.arguments = ["-rf", "/tmp/voxtype"]
-            rmTask.standardOutput = FileHandle.nullDevice
-            rmTask.standardError = FileHandle.nullDevice
-            try? rmTask.run()
-            rmTask.waitUntilExit()
-
-            // Wait a moment for filesystem to sync
-            Thread.sleep(forTimeInterval: 0.5)
-
-            // Start daemon
             DispatchQueue.main.async {
-                _ = run(["daemon"], wait: false)
+                launchApp()
                 completion?()
             }
         }

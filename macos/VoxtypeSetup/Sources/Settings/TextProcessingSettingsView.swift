@@ -95,7 +95,7 @@ struct TextProcessingSettingsView: View {
     }
 
     private func loadReplacements() {
-        let configPath = NSHomeDirectory() + "/Library/Application Support/voxtype/config.toml"
+        let configPath = VoxtypePaths.configFile
         guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
             return
         }
@@ -145,7 +145,7 @@ struct TextProcessingSettingsView: View {
     }
 
     private func saveReplacements() {
-        let configPath = NSHomeDirectory() + "/Library/Application Support/voxtype/config.toml"
+        let configPath = VoxtypePaths.configFile
         guard var content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
             return
         }

@@ -106,7 +106,6 @@ mod menu_ids {
     #[cfg(target_os = "macos")]
     pub const VIEW_LOGS: &str = "view_logs";
     pub const RESTART_DAEMON: &str = "restart_daemon";
-    #[cfg(windows)]
     pub const SETTINGS: &str = "settings";
 
     // Auto-start
@@ -173,6 +172,17 @@ fn open_console(args: &[&str]) {
 #[cfg(target_os = "macos")]
 fn open_path(path: &str) {
     let _ = std::process::Command::new("open").arg(path).spawn();
+}
+
+/// The settings window, VoxtypeSetup.app, which Voxtype.app carries next to
+/// this binary
+#[cfg(target_os = "macos")]
+fn settings_app() -> Option<std::path::PathBuf> {
+    let app = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("VoxtypeSetup.app");
+    app.exists().then_some(app)
 }
 
 /// Check if LaunchAgent is installed
@@ -555,7 +565,10 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
     let restart_item = MenuItem::with_id(menu_ids::RESTART_DAEMON, "Restart Daemon", true, None);
 
     #[cfg(windows)]
-    {
+    let has_settings = true;
+    #[cfg(target_os = "macos")]
+    let has_settings = settings_app().is_some();
+    if has_settings {
         let settings_item = MenuItem::with_id(menu_ids::SETTINGS, "Settings...", true, None);
         menu.append(&settings_item).unwrap();
     }
@@ -775,6 +788,12 @@ pub fn run(state_file: PathBuf) -> ! {
                     let _ = std::process::Command::new("osascript")
                         .args(["-e", &script])
                         .spawn();
+                }
+                #[cfg(target_os = "macos")]
+                menu_ids::SETTINGS => {
+                    if let Some(app) = settings_app() {
+                        open_path(app.to_str().unwrap_or(""));
+                    }
                 }
                 menu_ids::OPEN_CONFIG => {
                     if let Some(config_path) = Config::default_path() {

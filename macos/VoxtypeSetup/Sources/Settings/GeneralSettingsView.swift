@@ -4,9 +4,8 @@ import AppKit
 struct GeneralSettingsView: View {
     @State private var selectedEngine: String = "parakeet"
     @State private var hotkeyMode: String = "push_to_talk"
-    @State private var hotkey: String = "RIGHTALT"
+    @State private var hotkey: String = "FN"
     @State private var daemonRunning: Bool = false
-    @State private var menubarRunning: Bool = false
     @State private var needsRestart: Bool = false
 
     var body: some View {
@@ -46,12 +45,9 @@ struct GeneralSettingsView: View {
 
             Section {
                 Picker("Hotkey", selection: $hotkey) {
-                    Text("Right Option (⌥)").tag("RIGHTALT")
-                    Text("Right Command (⌘)").tag("RIGHTMETA")
-                    Text("Right Control (⌃)").tag("RIGHTCTRL")
-                    Text("F13").tag("F13")
-                    Text("F14").tag("F14")
-                    Text("F15").tag("F15")
+                    ForEach(HotkeyChoices.keys, id: \.1) { choice in
+                        Text(choice.0).tag(choice.1)
+                    }
                 }
                 .onChange(of: hotkey) { newValue in
                     ConfigManager.shared.updateConfig(key: "key", value: "\"\(newValue)\"", section: "[hotkey]")
@@ -92,29 +88,11 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("Daemon Status")
             }
-
-            Section {
-                Toggle("Show in Menu Bar", isOn: $menubarRunning)
-                    .onChange(of: menubarRunning) { newValue in
-                        if newValue {
-                            launchMenubar()
-                        } else {
-                            quitMenubar()
-                        }
-                    }
-
-                Text("Display a status icon in the menu bar for quick access.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } header: {
-                Text("Menu Bar")
-            }
         }
         .formStyle(.grouped)
         .onAppear {
             loadSettings()
             checkDaemonStatus()
-            checkMenubarStatus()
         }
     }
 
@@ -139,7 +117,7 @@ struct GeneralSettingsView: View {
     }
 
     private func startDaemon() {
-        _ = VoxtypeCLI.run(["daemon"], wait: false)
+        VoxtypeCLI.launchApp()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             checkDaemonStatus()
         }
@@ -151,33 +129,5 @@ struct GeneralSettingsView: View {
                 self.checkDaemonStatus()
             }
         }
-    }
-
-    private func checkMenubarStatus() {
-        let task = Process()
-        task.launchPath = "/usr/bin/pgrep"
-        task.arguments = ["-x", "VoxtypeMenubar"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
-        menubarRunning = (task.terminationStatus == 0)
-    }
-
-    private func launchMenubar() {
-        let menubarPath = "/Applications/Voxtype.app/Contents/MacOS/VoxtypeMenubar.app"
-        if FileManager.default.fileExists(atPath: menubarPath) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: menubarPath))
-        }
-    }
-
-    private func quitMenubar() {
-        let task = Process()
-        task.launchPath = "/usr/bin/pkill"
-        task.arguments = ["-x", "VoxtypeMenubar"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
     }
 }

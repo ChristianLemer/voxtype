@@ -73,7 +73,7 @@ struct ModelsSettingsView: View {
     }
 
     private func loadInstalledModels() {
-        let modelsDir = NSHomeDirectory() + "/Library/Application Support/voxtype/models"
+        let modelsDir = VoxtypePaths.modelsDir
 
         guard let contents = try? FileManager.default.contentsOfDirectory(atPath: modelsDir) else {
             return

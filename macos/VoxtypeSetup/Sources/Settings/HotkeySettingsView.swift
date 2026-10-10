@@ -2,30 +2,14 @@ import SwiftUI
 
 struct HotkeySettingsView: View {
     @State private var hotkeyEnabled: Bool = true
-    @State private var hotkey: String = "RIGHTALT"
+    @State private var hotkey: String = "FN"
     @State private var hotkeyMode: String = "push_to_talk"
     @State private var cancelKey: String = ""
     @State private var modelModifier: String = ""
     @State private var modifiers: [String] = []
     @State private var needsRestart: Bool = false
 
-    private let availableKeys = [
-        ("Right Option (⌥)", "RIGHTALT"),
-        ("Right Command (⌘)", "RIGHTMETA"),
-        ("Right Control (⌃)", "RIGHTCTRL"),
-        ("Left Option (⌥)", "LEFTALT"),
-        ("Left Command (⌘)", "LEFTMETA"),
-        ("Left Control (⌃)", "LEFTCTRL"),
-        ("F13", "F13"),
-        ("F14", "F14"),
-        ("F15", "F15"),
-        ("F16", "F16"),
-        ("F17", "F17"),
-        ("F18", "F18"),
-        ("F19", "F19"),
-        ("Scroll Lock", "SCROLLLOCK"),
-        ("Pause", "PAUSE"),
-    ]
+    private let availableKeys = HotkeyChoices.keys
 
     private let availableModifiers = [
         ("None", ""),
