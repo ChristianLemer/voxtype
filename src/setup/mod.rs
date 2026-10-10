@@ -979,42 +979,55 @@ pub async fn run_checks(config: &Config) -> anyhow::Result<()> {
         }
     }
 
-    // Check input group
-    println!("\nInput:");
-    if user_in_group("input") {
-        print_success(
-            "User is in 'input' group (evdev hotkeys + modifier-release guard available)",
-        );
-    } else {
-        print_warning("User is not in 'input' group");
-        println!("       evdev hotkeys: unavailable");
-        println!("       Modifier-release guard: unavailable");
-        println!("         (typed text may trigger keybindings if the hotkey is released late)");
-        println!("       Required only for evdev hotkey mode, not compositor keybindings");
-        println!("       To enable: sudo usermod -aG input $USER && logout");
+    // The input group and the output tools are Linux concerns: macOS and
+    // Windows type through CGEvent and SendInput, gated by OS permissions.
+    #[cfg(target_os = "linux")]
+    {
+        // Check input group
+        println!("\nInput:");
+        if user_in_group("input") {
+            print_success(
+                "User is in 'input' group (evdev hotkeys + modifier-release guard available)",
+            );
+        } else {
+            print_warning("User is not in 'input' group");
+            println!("       evdev hotkeys: unavailable");
+            println!("       Modifier-release guard: unavailable");
+            println!(
+                "         (typed text may trigger keybindings if the hotkey is released late)"
+            );
+            println!("       Required only for evdev hotkey mode, not compositor keybindings");
+            println!("       To enable: sudo usermod -aG input $USER && logout");
+        }
+
+        // Check output chain
+        let output_status = detect_output_chain().await;
+        print_output_chain_status(&output_status);
+
+        if output_status.primary_method.is_none() {
+            print_failure("No text output method available");
+            if output_status.display_server == DisplayServer::Wayland {
+                println!("       Install wtype: sudo pacman -S wtype");
+                println!("       Or eitype:     cargo install eitype");
+            } else {
+                println!("       Install ydotool: sudo pacman -S ydotool");
+            }
+            all_ok = false;
+        } else if output_status.primary_method.as_deref() == Some("clipboard") {
+            print_warning("Only clipboard mode available - typing won't work");
+            if output_status.display_server == DisplayServer::Wayland {
+                println!("       Install wtype: sudo pacman -S wtype");
+                println!("       Or eitype:     cargo install eitype");
+            } else {
+                println!("       Install ydotool: sudo pacman -S ydotool");
+            }
+        }
     }
-
-    // Check output chain
-    let output_status = detect_output_chain().await;
-    print_output_chain_status(&output_status);
-
-    if output_status.primary_method.is_none() {
-        print_failure("No text output method available");
-        if output_status.display_server == DisplayServer::Wayland {
-            println!("       Install wtype: sudo pacman -S wtype");
-            println!("       Or eitype:     cargo install eitype");
-        } else {
-            println!("       Install ydotool: sudo pacman -S ydotool");
-        }
-        all_ok = false;
-    } else if output_status.primary_method.as_deref() == Some("clipboard") {
-        print_warning("Only clipboard mode available - typing won't work");
-        if output_status.display_server == DisplayServer::Wayland {
-            println!("       Install wtype: sudo pacman -S wtype");
-            println!("       Or eitype:     cargo install eitype");
-        } else {
-            println!("       Install ydotool: sudo pacman -S ydotool");
-        }
+    #[cfg(target_os = "macos")]
+    {
+        println!("\nPermissions:");
+        print_info("Voxtype.app needs Microphone, Accessibility and Input Monitoring");
+        println!("       System Settings > Privacy & Security");
     }
 
     // Check whisper model (only if using Whisper engine)
