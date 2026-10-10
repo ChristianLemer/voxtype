@@ -1,0 +1,104 @@
+name: Build desktop
+
+# Builds voxtype with Parakeet and the recording card (osd-desktop) on
+# Windows, macOS and Linux, and keeps the binaries as workflow artifacts.
+# Nothing is published: there is no release step.
+
+on:
+  push:
+    branches:
+      - 'feat/windows'
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      # A git dependency (openvino-rs) has paths past MAX_PATH.
+      - name: Allow long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        shell: pwsh
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+        run: cargo build --release --features parakeet,osd-desktop
+
+      - name: Test the Windows-specific modules
+        shell: pwsh
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+        run: cargo test --release --features parakeet --lib -- win:: hotkey_windows sendinput audio::levels
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          target\release\voxtype.exe --version
+          target\release\voxtype.exe info engines
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxtype-windows-x86_64
+          path: |
+            target/release/voxtype.exe
+            target/release/voxtype-osd-desktop.exe
+            target/release/DirectML.dll
+          if-no-files-found: warn
+
+  macos:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
+        run: brew install cmake
+
+      - name: Build
+        run: cargo build --release --features gpu-metal,parakeet,osd-desktop
+
+      - name: Smoke test
+        run: |
+          target/release/voxtype --version
+          target/release/voxtype info engines
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxtype-macos-aarch64
+          path: |
+            target/release/voxtype
+            target/release/voxtype-osd-desktop
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libclang-dev cmake \
+            libgtk-3-dev libglib2.0-dev libx11-dev libxi-dev libxtst-dev
+
+      - name: Build
+        run: cargo build --release --features parakeet
+
+      - name: Smoke test
+        run: target/release/voxtype --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxtype-linux-x86_64
+          path: target/release/voxtype
