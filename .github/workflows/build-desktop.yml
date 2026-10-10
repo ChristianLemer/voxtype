@@ -35,7 +35,7 @@ jobs:
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
-        run: cargo test --release --features parakeet --lib -- win:: hotkey_windows sendinput audio::levels
+        run: "cargo test --release --features parakeet --lib -- win:: hotkey_windows sendinput audio::levels"
 
       - name: Smoke test
         shell: pwsh
