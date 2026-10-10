@@ -23,6 +23,16 @@ mod cli;
 use cli::Cli;
 
 fn main() -> Result<(), Error> {
+    // Building the full clap command tree recurses deeply; Windows gives the
+    // main thread 1 MB of stack and the release build overflowed it.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(generate_man_pages)?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn generate_man_pages() -> Result<(), Error> {
     // Only generate man pages for release builds or when explicitly requested
     let profile = env::var("PROFILE").unwrap_or_default();
     let generate = env::var("VOXTYPE_GEN_MANPAGES").is_ok() || profile == "release";
