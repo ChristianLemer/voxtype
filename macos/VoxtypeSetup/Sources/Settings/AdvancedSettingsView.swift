@@ -149,7 +149,7 @@ struct AdvancedSettingsView: View {
     }
 
     private func startDaemon() {
-        VoxtypeCLI.launchApp()
+        VoxtypeCLI.restartDaemon()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             checkDaemonStatus()
         }

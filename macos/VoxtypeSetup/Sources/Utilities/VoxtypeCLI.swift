@@ -100,7 +100,9 @@ enum VoxtypeCLI {
     }
 
     /// Restart the daemon by restarting Voxtype.app, so the menu bar icon
-    /// comes back with it.
+    /// comes back with it. Also the way to start it: when the daemon has
+    /// died but the menu bar process lives, `open` alone only activates the
+    /// running app and starts nothing.
     static func restartDaemon(completion: (() -> Void)? = nil) {
         DispatchQueue.global().async {
             stopApp()
