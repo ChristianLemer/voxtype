@@ -64,7 +64,7 @@ struct PermissionsSettingsView: View {
         // Input monitoring and accessibility are harder to check programmatically
         // We use a heuristic: try to see if voxtype status works
         let result = VoxtypeCLI.run(["status"])
-        let status = result.output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status = VoxtypeCLI.lastLine(result.output).lowercased()
 
         // If daemon is running and responding, permissions are likely granted
         if status == "idle" || status == "recording" || status == "transcribing" {

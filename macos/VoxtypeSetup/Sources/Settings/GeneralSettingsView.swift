@@ -112,7 +112,7 @@ struct GeneralSettingsView: View {
 
     private func checkDaemonStatus() {
         let result = VoxtypeCLI.run(["status"])
-        let status = result.output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status = VoxtypeCLI.lastLine(result.output).lowercased()
         daemonRunning = (status == "idle" || status == "recording" || status == "transcribing")
     }
 

@@ -66,16 +66,24 @@ enum VoxtypeCLI {
         }
     }
 
+    /// The last non-empty line of a command's output. The CLI's log lines
+    /// share the pipe, so `status` prints e.g. an INFO line before "idle".
+    static func lastLine(_ output: String) -> String {
+        output.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty } ?? ""
+    }
+
     /// Get daemon status
     static func getStatus() -> String {
         let result = run(["status"])
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lastLine(result.output)
     }
 
     /// Check if daemon is running
     static func isDaemonRunning() -> Bool {
         let result = run(["status"])
-        let status = result.output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status = lastLine(result.output).lowercased()
         return status == "idle" || status == "recording" || status == "transcribing"
     }
 
