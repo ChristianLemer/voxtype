@@ -72,23 +72,14 @@ echo -e "${GREEN}Building Voxtype.app for ${VERSION}...${NC}"
 echo "Binary: $BINARY"
 echo
 
-# Build Swift apps
-echo -e "${YELLOW}Building VoxtypeMenubar...${NC}"
-cd "${PROJECT_DIR}/macos/VoxtypeMenubar"
-./build-app.sh > /dev/null 2>&1
-MENUBAR_APP="${PROJECT_DIR}/macos/VoxtypeMenubar/.build/VoxtypeMenubar.app"
-
+# Build the settings window. The menu bar icon is the Rust binary's own
+# (`voxtype menubar`), so the Swift VoxtypeMenubar app is not bundled.
 echo -e "${YELLOW}Building VoxtypeSetup...${NC}"
 cd "${PROJECT_DIR}/macos/VoxtypeSetup"
-./build-app.sh > /dev/null 2>&1
+./build-app.sh
 SETUP_APP="${PROJECT_DIR}/macos/VoxtypeSetup/.build/VoxtypeSetup.app"
 
-# Verify Swift apps exist
-if [[ ! -d "$MENUBAR_APP" ]]; then
-    echo -e "${RED}Error: VoxtypeMenubar.app not found${NC}"
-    exit 1
-fi
-
+# Verify the Swift app exists
 if [[ ! -d "$SETUP_APP" ]]; then
     echo -e "${RED}Error: VoxtypeSetup.app not found${NC}"
     exit 1
@@ -126,9 +117,6 @@ if [[ -n "$ORT_DYLIB" ]]; then
     # available.
     codesign --force --sign - "$APP_DIR/Contents/MacOS/voxtype-bin"
 fi
-
-# Copy VoxtypeMenubar.app
-cp -R "$MENUBAR_APP" "$APP_DIR/Contents/MacOS/"
 
 # Copy VoxtypeSetup.app
 cp -R "$SETUP_APP" "$APP_DIR/Contents/MacOS/"
