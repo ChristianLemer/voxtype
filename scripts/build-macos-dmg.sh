@@ -141,9 +141,22 @@ if [[ -f "${PROJECT_DIR}/assets/engines/whisper.png" ]]; then
     cp "${PROJECT_DIR}/assets/engines/whisper.png" "$APP_DIR/Contents/Resources/"
 fi
 
-# Copy app icon if it exists
+# App icon: a prebuilt icon.icns if present, otherwise built from the
+# 1024 px macOS-style PNG.
 if [[ -f "${PROJECT_DIR}/assets/icon.icns" ]]; then
     cp "${PROJECT_DIR}/assets/icon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+elif [[ -f "${PROJECT_DIR}/assets/icon-macos.png" ]]; then
+    ICONSET_DIR="${RELEASES_DIR}/AppIcon.iconset"
+    rm -rf "$ICONSET_DIR"
+    mkdir -p "$ICONSET_DIR"
+    for size in 16 32 128 256 512; do
+        sips -z $size $size "${PROJECT_DIR}/assets/icon-macos.png" \
+            --out "$ICONSET_DIR/icon_${size}x${size}.png" > /dev/null
+        sips -z $((size * 2)) $((size * 2)) "${PROJECT_DIR}/assets/icon-macos.png" \
+            --out "$ICONSET_DIR/icon_${size}x${size}@2x.png" > /dev/null
+    done
+    iconutil -c icns "$ICONSET_DIR" -o "$APP_DIR/Contents/Resources/AppIcon.icns"
+    rm -rf "$ICONSET_DIR"
 fi
 
 # Create Info.plist
@@ -160,6 +173,8 @@ cat > "$APP_DIR/Contents/Info.plist" << EOF
     <string>Voxtype</string>
     <key>CFBundleDisplayName</key>
     <string>Voxtype</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>

@@ -24,7 +24,8 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp ".build/release/$APP_NAME" "$MACOS/"
 
 # Create icns from source icon
-ICON_SOURCE="$REPO_ROOT/assets/icon.png"
+ICON_SOURCE="$REPO_ROOT/assets/icon-macos.png"
+[ -f "$ICON_SOURCE" ] || ICON_SOURCE="$REPO_ROOT/assets/icon.png"
 if [ -f "$ICON_SOURCE" ]; then
     ICONSET_DIR="$SCRIPT_DIR/.build/AppIcon.iconset"
     rm -rf "$ICONSET_DIR"
