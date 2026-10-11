@@ -7,7 +7,7 @@ name: Build desktop
 on:
   push:
     branches:
-      - 'feat/windows'
+      - 'feat/desktop'
   workflow_dispatch:
 
 jobs:
