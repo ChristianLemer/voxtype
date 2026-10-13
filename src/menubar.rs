@@ -68,6 +68,16 @@ impl VoxtypeState {
         tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("icon buffer matches its size")
     }
 
+    /// The menu bar title can only use the system text colour, so the red
+    /// recording sign is an image; the other states stay emoji titles.
+    #[cfg(target_os = "macos")]
+    fn menubar_image(&self) -> Option<tray_icon::Icon> {
+        match self {
+            VoxtypeState::Recording => Some(on_air_badge()),
+            _ => None,
+        }
+    }
+
     fn status_text(&self) -> &'static str {
         match self {
             VoxtypeState::Idle => "Status: Ready",
@@ -76,6 +86,83 @@ impl VoxtypeState {
             VoxtypeState::Stopped => "Status: Daemon not running",
         }
     }
+}
+
+/// 5x7 pixel glyphs for the "ON AIR" sign; `#` is a lit pixel.
+#[cfg(target_os = "macos")]
+const ON_AIR_GLYPHS: [&[&str; 7]; 6] = [
+    &[
+        ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###.",
+    ],
+    &[
+        "#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#",
+    ],
+    &["...", "...", "...", "...", "...", "...", "..."],
+    &[
+        ".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#",
+    ],
+    &["###", ".#.", ".#.", ".#.", ".#.", ".#.", "###"],
+    &[
+        "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#",
+    ],
+];
+
+/// White "ON AIR" on a red rounded plate, sized for a Retina menu bar
+/// (tray-icon scales the image to 18 pt high).
+#[cfg(target_os = "macos")]
+fn on_air_badge() -> tray_icon::Icon {
+    use tiny_skia::{Color, FillRule, Paint, Pixmap, Rect, Transform};
+
+    const DOT: f32 = 3.0;
+    const PAD_X: f32 = 9.0;
+    const HEIGHT: u32 = 36;
+
+    let columns: usize = ON_AIR_GLYPHS.iter().map(|g| g[0].len() + 1).sum::<usize>() - 1;
+    let width = (columns as f32 * DOT + 2.0 * PAD_X) as u32;
+    let mut pixmap = Pixmap::new(width, HEIGHT).expect("non-zero badge size");
+
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.set_color(Color::from_rgba8(0xe0, 0x30, 0x30, 0xff));
+    if let Some(plate) =
+        crate::osd::desktop::card::rounded_rect(0.0, 2.0, width as f32, HEIGHT as f32 - 4.0, 6.0)
+    {
+        pixmap.fill_path(
+            &plate,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
+    paint.anti_alias = false;
+    paint.set_color(Color::WHITE);
+    let top = (HEIGHT as f32 - 7.0 * DOT) / 2.0;
+    let mut left = PAD_X;
+    for glyph in ON_AIR_GLYPHS {
+        for (row, line) in glyph.iter().enumerate() {
+            for (col, _) in line.chars().enumerate().filter(|(_, c)| *c == '#') {
+                let x = left + col as f32 * DOT;
+                let y = top + row as f32 * DOT;
+                if let Some(dot) = Rect::from_xywh(x, y, DOT, DOT) {
+                    pixmap.fill_rect(dot, &paint, Transform::identity(), None);
+                }
+            }
+        }
+        left += (glyph[0].len() + 1) as f32 * DOT;
+    }
+
+    // tiny-skia stores premultiplied alpha; tray-icon wants straight RGBA.
+    let rgba: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    tray_icon::Icon::from_rgba(rgba, width, HEIGHT).expect("icon buffer matches its size")
 }
 
 /// Menu item IDs
@@ -835,6 +922,20 @@ pub fn run(state_file: PathBuf) -> ! {
             let new_state = read_state_from_file(&state_file);
 
             if new_state != last_state {
+                #[cfg(target_os = "macos")]
+                {
+                    // tray-icon leaves the title untouched on None, so an
+                    // empty string is what clears it beside the image.
+                    let image = new_state.menubar_image();
+                    let title = if image.is_some() {
+                        ""
+                    } else {
+                        new_state.icon()
+                    };
+                    let _ = tray.set_icon(image);
+                    let _ = tray.set_title(Some(title));
+                }
+                #[cfg(windows)]
                 let _ = tray.set_title(Some(new_state.icon()));
                 #[cfg(windows)]
                 {

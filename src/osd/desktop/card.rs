@@ -81,7 +81,7 @@ fn paint(c: Color) -> Paint<'static> {
     p
 }
 
-fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
+pub(crate) fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
     let r = r.min(w / 2.0).min(h / 2.0);
     // Cubic approximation of a quarter circle.
     let k = r * 0.552_284_8;

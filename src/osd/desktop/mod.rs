@@ -14,7 +14,7 @@
 //! Windows); the daemon state comes from its state file. While the daemon is
 //! idle the card is hidden.
 
-mod card;
+pub(crate) mod card;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(windows)]
