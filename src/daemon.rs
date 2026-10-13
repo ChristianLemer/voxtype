@@ -4588,6 +4588,18 @@ impl Daemon {
             task.abort();
         }
 
+        // Kill the recording card before leaving. Dropping the JoinHandle
+        // only *detaches* the supervisor task, so its Child is never dropped
+        // and `kill_on_drop` never fires — the card then outlives the daemon.
+        // That is not merely untidy: an orphan from this bundle keeps macOS
+        // counting Voxtype.app as running, so launching the app only
+        // activates the ghost and the user cannot start it again. Awaiting
+        // the aborted task lets the Child drop before this process exits.
+        if let Some(task) = self.osd_supervisor_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+
         // Stop any active meeting
         if self.meeting_daemon.is_some() {
             tracing::info!("Stopping active meeting on shutdown");

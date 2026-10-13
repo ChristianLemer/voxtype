@@ -14,6 +14,26 @@ struct CardApp {
     model: Model,
     texture: Option<egui::TextureHandle>,
     was_visible: bool,
+    /// The daemon's pid at startup. See [`CardApp::orphaned`].
+    born_to: u32,
+}
+
+impl CardApp {
+    /// Has the daemon that spawned this card gone?
+    ///
+    /// The supervisor spawns the card with `kill_on_drop`, which only fires if
+    /// the `Child` is dropped — never on `std::process::exit`, a panic, or
+    /// SIGKILL. The card would then linger, and a lingering process from the
+    /// bundle keeps macOS counting Voxtype.app as running: launching the app
+    /// merely activates the ghost, so the user cannot start it again.
+    ///
+    /// Unix reparents an orphan onto pid 1, so a parent that changes is a
+    /// parent that died. Comparing against the pid seen at startup rather than
+    /// testing `== 1` avoids walking out on a card that was legitimately
+    /// started with pid 1 as its parent.
+    fn orphaned(&self) -> bool {
+        std::os::unix::process::parent_id() != self.born_to
+    }
 }
 
 /// Bounds of the display holding the mouse pointer, as (x, y, width, height)
@@ -82,6 +102,12 @@ impl eframe::App for CardApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        if self.orphaned() {
+            tracing::info!("Daemon is gone, closing the recording card");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
 
         let visible = self.model.poll();
 
@@ -172,6 +198,7 @@ pub fn run(model: Model) -> anyhow::Result<()> {
                 model,
                 texture: None,
                 was_visible: false,
+                born_to: std::os::unix::process::parent_id(),
             }))
         }),
     )
