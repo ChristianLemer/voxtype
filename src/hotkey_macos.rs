@@ -85,6 +85,17 @@ impl HotkeyListener for RdevHotkeyListener {
         // event tap that never fires. The only fix is to restart the process after
         // permission is granted. Spawn a watcher that re-execs when permission appears.
         if !is_accessibility_granted() {
+            // A log line is not enough here: the daemon goes on to announce
+            // "Listening for hotkey", looks healthy, and dictation silently
+            // never fires. macOS only shows its own dialog when the app is
+            // absent from the list — a stale entry left by an earlier build
+            // leaves the switch on and the tap dead, with nothing said.
+            crate::notification::send_sync(
+                "Voxtype",
+                "Accessibility permission denied: the hotkey will not respond. \
+                 Grant it in System Settings > Privacy & Security > Accessibility.",
+            );
+
             let running_watcher = running.clone();
             std::thread::spawn(move || {
                 loop {
