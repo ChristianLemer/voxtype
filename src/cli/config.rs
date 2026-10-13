@@ -76,6 +76,44 @@ pub enum ConfigAction {
         json: bool,
     },
 
+    /// Merge a TOML file into the config, leaving everything else alone
+    #[command(long_about = "\
+        Merge a TOML file into the config, leaving everything else alone\n\n\
+        Only the keys the file names are touched; comments and settings it \
+        does not mention survive untouched. Each key is validated exactly as \
+        `config set` validates it, and nothing is written unless every key \
+        passes, so a bad file leaves the config as it was.\n\n\
+        Idempotent: running it twice writes nothing the second time. Never \
+        prompts, never opens a network connection, never needs a terminal, \
+        which is what makes it usable from an unattended installer.\n\n\
+        Exit codes: 0 on success, 2 for an unknown key, an invalid value, or \
+        malformed TOML, 1 for filesystem and validation failures.\n\n\
+        Example:\n  \
+        voxtype config apply /path/to/kit/voxtype.toml")]
+    Apply {
+        /// TOML file holding the keys to merge in
+        #[arg(value_name = "FILE")]
+        file: std::path::PathBuf,
+    },
+
+    /// Report whether the config already matches a TOML file
+    #[command(long_about = "\
+        Report whether the config already matches a TOML file\n\n\
+        `config check` is `config apply` replayed without recording: it \
+        answers whether applying that file would change anything. Keys the \
+        file does not mention are ignored.\n\n\
+        Prints one line per differing key, then a summary. Never prompts, \
+        never opens a network connection, never needs a terminal.\n\n\
+        Exit codes: 0 when the config already matches, 1 when it differs, 2 \
+        for an unknown key, an invalid value, or malformed TOML.\n\n\
+        Example:\n  \
+        voxtype config check /path/to/kit/voxtype.toml")]
+    Check {
+        /// TOML file to compare the config against
+        #[arg(value_name = "FILE")]
+        file: std::path::PathBuf,
+    },
+
     /// Describe every settable configuration key
     ///
     /// Emits the key allowlist with types, valid values, current values, and

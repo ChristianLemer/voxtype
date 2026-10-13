@@ -11,7 +11,7 @@ use voxtype::{config, daemon, setup, transcribe, Cli, Commands, ConfigAction, Se
 
 use super::config_get::run_config_get;
 use super::config_schema::run_config_schema;
-use super::config_set::{run_config_set, run_config_unset};
+use super::config_set::{run_config_apply, run_config_check, run_config_set, run_config_unset};
 use super::config_show::show_config;
 use super::info::run_info_command;
 use super::meeting::run_meeting_command;
@@ -411,6 +411,12 @@ pub(crate) async fn dispatch(
             }
             Some(ConfigAction::Unset { key }) => {
                 run_config_unset(cli.config.clone(), &key)?;
+            }
+            Some(ConfigAction::Apply { file }) => {
+                run_config_apply(cli.config.clone(), &file)?;
+            }
+            Some(ConfigAction::Check { file }) => {
+                run_config_check(cli.config.clone(), &file)?;
             }
             Some(ConfigAction::Get { key, json }) => {
                 run_config_get(cli.config.clone(), &config, key, json)?;

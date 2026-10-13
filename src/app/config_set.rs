@@ -66,6 +66,72 @@ pub(crate) fn run_config_set(
     }
 }
 
+/// Dispatcher for `voxtype config apply <FILE>`.
+pub(crate) fn run_config_apply(
+    cli_override: Option<PathBuf>,
+    file: &std::path::Path,
+) -> anyhow::Result<()> {
+    let path = resolve_config_path_for_write(cli_override)?;
+    match config_set::apply_file(path, file) {
+        Ok(out) => {
+            if out.differing.is_empty() {
+                println!(
+                    "Already up to date: {} key(s) match in {}",
+                    out.considered,
+                    out.path.display()
+                );
+            } else {
+                for key in &out.differing {
+                    println!("Set {}", key);
+                }
+                println!(
+                    "Applied {} of {} key(s) to {}",
+                    out.differing.len(),
+                    out.considered,
+                    out.path.display()
+                );
+                restart_hint(out.restart_required);
+            }
+            Ok(())
+        }
+        Err(e) => fail(e),
+    }
+}
+
+/// Dispatcher for `voxtype config check <FILE>`.
+///
+/// Exits 1 on divergence. That is a result, not a failure, so it is reported
+/// on stdout and the process exits quietly rather than printing `error:`.
+pub(crate) fn run_config_check(
+    cli_override: Option<PathBuf>,
+    file: &std::path::Path,
+) -> anyhow::Result<()> {
+    let path = resolve_config_path_for_write(cli_override)?;
+    match config_set::check_file(path, file) {
+        Ok(out) if out.differing.is_empty() => {
+            println!(
+                "Matches: {} key(s) as expected in {}",
+                out.considered,
+                out.path.display()
+            );
+            Ok(())
+        }
+        Ok(out) => {
+            for key in &out.differing {
+                println!("Differs: {}", key);
+            }
+            println!(
+                "{} of {} key(s) differ in {}",
+                out.differing.len(),
+                out.considered,
+                out.path.display()
+            );
+            std::process::exit(1);
+        }
+        Err(e) => fail(e),
+    }
+}
+
 /// Dispatcher for `voxtype config unset <KEY>`.
 pub(crate) fn run_config_unset(cli_override: Option<PathBuf>, key: &str) -> anyhow::Result<()> {
     let path = resolve_config_path_for_write(cli_override)?;

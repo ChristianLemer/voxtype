@@ -23,7 +23,7 @@
 //! pipeline as the TUI, so a change that would stop the daemon loading is
 //! rolled back instead of written.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::schema::{self, Found, TypedValue, ValueError};
 use crate::config::TranscriptionEngine;
@@ -67,6 +67,24 @@ pub enum ConfigSetError {
 
     #[error("config editor: {0}")]
     Editor(#[from] EditorError),
+
+    #[error("cannot read '{path}': {source}")]
+    InputRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("'{path}' is not valid TOML: {source}")]
+    InputParse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+
+    #[error(
+        "'{key}' in the input file is an array or a date, which no config key \
+         takes.\n  Run `voxtype config schema` to see each key's type."
+    )]
+    UnsupportedValue { key: String },
 }
 
 impl ConfigSetError {
@@ -79,8 +97,10 @@ impl ConfigSetError {
             | ConfigSetError::FeatureNotCompiled(_)
             | ConfigSetError::UnknownKey(_)
             | ConfigSetError::BadValue(_)
-            | ConfigSetError::KeyFeatureNotCompiled { .. } => 2,
-            ConfigSetError::Editor(_) => 1,
+            | ConfigSetError::KeyFeatureNotCompiled { .. }
+            | ConfigSetError::InputParse { .. }
+            | ConfigSetError::UnsupportedValue { .. } => 2,
+            ConfigSetError::Editor(_) | ConfigSetError::InputRead { .. } => 1,
         }
     }
 }
@@ -240,6 +260,156 @@ pub fn unset_key(path: PathBuf, key: &str) -> Result<SetOutcome, ConfigSetError>
         path: editor.path().to_path_buf(),
         restart_required: spec.restart_required,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Applying a whole file: `voxtype config apply` / `voxtype config check`
+// ---------------------------------------------------------------------------
+//
+// These exist for unattended provisioning: a fleet tool stages a TOML file
+// holding only the keys it cares about, applies it, and later asks whether the
+// machine still matches. Both are deliberately silent on everything the file
+// does not mention, so a user's own settings survive a deployment.
+//
+// Neither prompts, opens a socket, or needs a terminal: an atom runs with
+// nobody at the keyboard, and behind a proxy that fails closed.
+
+/// Flatten a parsed TOML document into (dotted key, raw value) pairs, in
+/// document order, so errors name keys in the order the file lists them.
+///
+/// Values become the same strings `config set` takes on the command line,
+/// which is what [`schema::validate_value`] checks. Nested tables recurse,
+/// giving both `output.notification.show_engine_icon` and the map entries of
+/// `text.replacements`.
+fn flatten(
+    value: &toml::Value,
+    prefix: &str,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let table = match value {
+        toml::Value::Table(t) => t,
+        _ => return Ok(()),
+    };
+    for (key, child) in table {
+        let dotted = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        let raw = match child {
+            toml::Value::Table(_) => {
+                flatten(child, &dotted, out)?;
+                continue;
+            }
+            toml::Value::String(s) => s.clone(),
+            toml::Value::Integer(n) => n.to_string(),
+            toml::Value::Float(f) => f.to_string(),
+            toml::Value::Boolean(b) => b.to_string(),
+            toml::Value::Array(_) | toml::Value::Datetime(_) => return Err(dotted),
+        };
+        out.push((dotted, raw));
+    }
+    Ok(())
+}
+
+/// What a file would change, or did change.
+#[derive(Debug, Clone)]
+pub struct FileOutcome {
+    /// The config file acted on.
+    pub path: PathBuf,
+    /// Keys whose on-disk value differs from the file's, in document order.
+    /// Empty means the machine already matches.
+    pub differing: Vec<String>,
+    /// How many keys the input file asked about, matched or not.
+    pub considered: usize,
+    /// Whether any differing key needs a daemon restart to take effect.
+    pub restart_required: bool,
+}
+
+/// Load the config, apply every key the input file names, and report what
+/// moved — without saving. `apply_file` saves the result; `check_file` throws
+/// it away, which is what makes check "apply replayed without recording".
+fn stage(
+    config_path: PathBuf,
+    input: &Path,
+) -> Result<(ConfigEditor, FileOutcome), ConfigSetError> {
+    let text = std::fs::read_to_string(input).map_err(|source| ConfigSetError::InputRead {
+        path: input.to_path_buf(),
+        source,
+    })?;
+    let parsed: toml::Value =
+        toml::from_str(&text).map_err(|source| ConfigSetError::InputParse {
+            path: input.to_path_buf(),
+            source,
+        })?;
+
+    let mut desired = Vec::new();
+    flatten(&parsed, "", &mut desired).map_err(|key| ConfigSetError::UnsupportedValue { key })?;
+
+    let mut editor = ConfigEditor::load_from_path(config_path)?;
+    let mut outcome = FileOutcome {
+        path: editor.path().to_path_buf(),
+        differing: Vec::new(),
+        considered: desired.len(),
+        restart_required: false,
+    };
+
+    for (key, raw) in &desired {
+        // `engine` is allowlisted, but validate_value only checks the name is
+        // a known engine. Writing one this binary cannot run would leave a
+        // config the daemon refuses, so apply the same gate `set_engine` does.
+        if key == "engine" && !engine_feature_compiled(raw) {
+            return Err(ConfigSetError::FeatureNotCompiled(raw.clone()));
+        }
+
+        let found = lookup(key)?;
+        let spec = found.spec();
+        let value = schema::validate_value(spec, raw)?;
+        let (table, field) = found.target();
+
+        // Compare values, not their rendering. toml_edit keeps each value's
+        // original decoration, so `0.50` and `0.5` differ as text while being
+        // one value — and comparing the rendered form reported every key of
+        // the file as changed on a replay, which is the opposite of
+        // idempotent. Apply regardless: that keeps the required-sibling
+        // defaults `config set` writes, and the result is thrown away unless
+        // something actually differs.
+        let already = match &value {
+            TypedValue::Bool(b) => editor.get_bool(table, field) == Some(*b),
+            TypedValue::Int(n) => editor.get_int(table, field) == Some(*n),
+            TypedValue::Float(f) => editor.get_float(table, field) == Some(*f),
+            TypedValue::Str(s) => editor.get_string(table, field).as_deref() == Some(s.as_str()),
+        };
+
+        schema::apply(&mut editor, &found, &value);
+
+        if !already {
+            outcome.differing.push(found.dotted_key());
+            outcome.restart_required |= spec.restart_required;
+        }
+    }
+
+    Ok((editor, outcome))
+}
+
+/// Merge every key of `input` into the config file, leaving the rest alone.
+///
+/// Idempotent: a second run writes nothing, because nothing differs. Comments
+/// and unmentioned fields survive, and the single save at the end goes through
+/// the same atomic write, post-save validation and rollback as `config set`.
+pub fn apply_file(config_path: PathBuf, input: &Path) -> Result<FileOutcome, ConfigSetError> {
+    let (mut editor, outcome) = stage(config_path, input)?;
+    if !outcome.differing.is_empty() {
+        editor.save()?;
+    }
+    Ok(outcome)
+}
+
+/// Report whether the config file already holds every key of `input`, without
+/// writing anything.
+pub fn check_file(config_path: PathBuf, input: &Path) -> Result<FileOutcome, ConfigSetError> {
+    let (_discarded, outcome) = stage(config_path, input)?;
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -639,5 +809,198 @@ mod tests {
         let cfg = reload(&path);
         assert_eq!(cfg.osd.opacity, 0.5);
         assert_eq!(cfg.hotkey.key, "HOME", "existing settings must survive");
+    }
+
+    // ---------------------------------------------------------------------
+    // apply / check over a whole file
+    // ---------------------------------------------------------------------
+
+    fn kit(contents: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kit.toml");
+        fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn apply_writes_only_the_keys_the_file_names() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit("[hotkey]\nmode = \"toggle\"\n");
+
+        // A setting the kit says nothing about, which must survive.
+        set_key(cfg_path.clone(), "audio.max_duration_secs", "99").unwrap();
+
+        let out = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(out.differing, ["hotkey.mode"]);
+        assert_eq!(out.considered, 1);
+
+        let cfg = reload(&cfg_path);
+        assert_eq!(cfg.hotkey.mode, crate::config::ActivationMode::Toggle);
+        assert_eq!(
+            cfg.audio.max_duration_secs, 99,
+            "a key the kit never mentions must be left alone"
+        );
+    }
+
+    #[test]
+    fn apply_is_idempotent_and_leaves_the_file_byte_identical() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit(
+            "engine = \"whisper\"\n[hotkey]\nmode = \"toggle\"\n[audio]\nmax_duration_secs = 120\n",
+        );
+
+        let first = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(first.differing.len(), 3);
+        let after_first = fs::read_to_string(&cfg_path).unwrap();
+
+        let second = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert!(
+            second.differing.is_empty(),
+            "second run changed {:?}",
+            second.differing
+        );
+        assert_eq!(
+            fs::read_to_string(&cfg_path).unwrap(),
+            after_first,
+            "a replay must not rewrite the file"
+        );
+    }
+
+    /// Saul's rule for Talos: `check` is `apply` replayed without recording.
+    #[test]
+    fn check_agrees_with_apply_and_never_writes() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit("[hotkey]\nmode = \"toggle\"\n");
+
+        let before = fs::read_to_string(&cfg_path).unwrap();
+        let checked = check_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(checked.differing, ["hotkey.mode"]);
+        assert_eq!(
+            fs::read_to_string(&cfg_path).unwrap(),
+            before,
+            "check must not touch the file"
+        );
+
+        let applied = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(
+            applied.differing, checked.differing,
+            "check must predict exactly what apply does"
+        );
+
+        let after = check_file(cfg_path.clone(), &kit_path).unwrap();
+        assert!(after.differing.is_empty(), "check must pass once applied");
+    }
+
+    #[test]
+    fn apply_preserves_comments() {
+        let mut base = crate::config::default_config_content();
+        let marker = "\n# VOXTYPE-TEST-MARKER: keep me\n";
+        let at = base.find('\n').map(|i| i + 1).unwrap_or(0);
+        base.insert_str(at, marker);
+        let (_d, cfg_path) = temp_config(&base);
+        let (_k, kit_path) = kit("[osd]\nposition = \"top-right\"\n");
+
+        apply_file(cfg_path.clone(), &kit_path).unwrap();
+        let after = fs::read_to_string(&cfg_path).unwrap();
+        assert!(after.contains("# VOXTYPE-TEST-MARKER: keep me"));
+        assert!(after.contains("position = \"top-right\""));
+    }
+
+    #[test]
+    fn nested_tables_and_map_entries_both_resolve() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit(
+            "[output.notification]\nshow_engine_icon = false\n\n[text.replacements]\nbtw = \"by the way\"\n",
+        );
+        let out = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(out.considered, 2, "both leaves must be seen");
+
+        let cfg = reload(&cfg_path);
+        assert!(!cfg.output.notification.show_engine_icon);
+        assert_eq!(
+            cfg.text.replacements.get("btw").map(String::as_str),
+            Some("by the way")
+        );
+    }
+
+    /// Equivalent numbers are one value: check must not demand a rewrite it
+    /// would not perform.
+    #[test]
+    fn equivalent_numbers_do_not_count_as_a_difference() {
+        let (_d, cfg_path) = full_config();
+        set_key(cfg_path.clone(), "audio.feedback.volume", "0.5").unwrap();
+        let (_k, kit_path) = kit("[audio.feedback]\nvolume = 0.50\n");
+        let out = check_file(cfg_path.clone(), &kit_path).unwrap();
+        assert!(out.differing.is_empty(), "0.50 and 0.5 are the same value");
+    }
+
+    #[test]
+    fn a_bad_key_or_value_writes_nothing() {
+        let (_d, cfg_path) = full_config();
+        let before = fs::read_to_string(&cfg_path).unwrap();
+
+        for (contents, label) in [
+            (
+                "[hotkey]\nmode = \"toggle\"\n[nope]\nwhat = 1\n",
+                "unknown key",
+            ),
+            ("[hotkey]\nmode = \"sideways\"\n", "invalid value"),
+        ] {
+            let (_k, kit_path) = kit(contents);
+            let err = apply_file(cfg_path.clone(), &kit_path).unwrap_err();
+            assert_eq!(err.exit_code(), 2, "{label} should be a user-fixable error");
+            assert_eq!(
+                fs::read_to_string(&cfg_path).unwrap(),
+                before,
+                "{label} must leave the config untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_toml_is_reported_as_fixable() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit("this is not toml = = =\n");
+        let err = apply_file(cfg_path, &kit_path).unwrap_err();
+        assert!(matches!(err, ConfigSetError::InputParse { .. }));
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn a_missing_input_file_is_an_io_error() {
+        let (_d, cfg_path) = full_config();
+        let err = apply_file(cfg_path, std::path::Path::new("/nonexistent/kit.toml")).unwrap_err();
+        assert!(matches!(err, ConfigSetError::InputRead { .. }));
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn arrays_are_rejected_by_name() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit("[output]\ndriver_order = [\"wtype\"]\n");
+        let err = apply_file(cfg_path, &kit_path).unwrap_err();
+        match err {
+            ConfigSetError::UnsupportedValue { key } => assert_eq!(key, "output.driver_order"),
+            other => panic!("expected UnsupportedValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_file_is_a_no_op() {
+        let (_d, cfg_path) = full_config();
+        let before = fs::read_to_string(&cfg_path).unwrap();
+        let (_k, kit_path) = kit("# nothing to say\n");
+        let out = apply_file(cfg_path.clone(), &kit_path).unwrap();
+        assert_eq!(out.considered, 0);
+        assert!(out.differing.is_empty());
+        assert_eq!(fs::read_to_string(&cfg_path).unwrap(), before);
+    }
+
+    #[test]
+    fn apply_reports_whether_a_restart_is_needed() {
+        let (_d, cfg_path) = full_config();
+        let (_k, kit_path) = kit("[hotkey]\nmode = \"toggle\"\n");
+        let out = apply_file(cfg_path, &kit_path).unwrap();
+        assert!(out.restart_required, "hotkey.mode needs a restart");
     }
 }
