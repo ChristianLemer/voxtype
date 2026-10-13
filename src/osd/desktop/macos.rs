@@ -13,7 +13,66 @@ use super::{Model, STATE_POLL};
 struct CardApp {
     model: Model,
     texture: Option<egui::TextureHandle>,
-    positioned: bool,
+    was_visible: bool,
+}
+
+/// Bounds of the display holding the mouse pointer, as (x, y, width, height)
+/// in the global point space egui positions windows in. `CGDisplayBounds` is
+/// already in points, like `ViewportCommand::OuterPosition`, so the two agree
+/// without conversion. Falls back to the main display if the pointer cannot
+/// be read.
+fn cursor_display_bounds() -> (f32, f32, f32, f32) {
+    use core_graphics::display::CGDisplay;
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    // An event created from a null-ish source carries the current pointer
+    // location — the standard way to ask CoreGraphics where the mouse is.
+    let cursor = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .ok()
+        .and_then(|source| CGEvent::new(source).ok())
+        .map(|event| event.location());
+
+    let under_cursor =
+        cursor
+            .zip(CGDisplay::active_displays().ok())
+            .and_then(|(point, displays)| {
+                displays
+                    .iter()
+                    .map(|id| CGDisplay::new(*id).bounds())
+                    .find(|b| {
+                        point.x >= b.origin.x
+                            && point.x < b.origin.x + b.size.width
+                            && point.y >= b.origin.y
+                            && point.y < b.origin.y + b.size.height
+                    })
+            });
+
+    let bounds = under_cursor.unwrap_or_else(|| CGDisplay::main().bounds());
+    (
+        bounds.origin.x as f32,
+        bounds.origin.y as f32,
+        bounds.size.width as f32,
+        bounds.size.height as f32,
+    )
+}
+
+/// Top-left corner for the card on a display given as (x, y, width, height):
+/// centred horizontally, `top_margin` down, never past the bottom edge. The
+/// display's own origin is added, which is what makes a non-primary display
+/// work — the card used to be laid out as though every display began at
+/// (0, 0).
+fn card_origin(
+    display: (f32, f32, f32, f32),
+    config: &crate::osd::config::OsdConfig,
+) -> (f32, f32) {
+    let (dx, dy, dw, dh) = display;
+    let w = config.width_px as f32 + 2.0 * GLOW_PAD;
+    let h = config.height_px as f32 + 2.0 * GLOW_PAD;
+    let x = dx + (dw - w) / 2.0;
+    let y = dy
+        + (dh * config.top_margin.clamp(0.0, 1.0) - GLOW_PAD).min(dh - h - config.margin_px as f32);
+    (x, y)
 }
 
 impl eframe::App for CardApp {
@@ -24,19 +83,23 @@ impl eframe::App for CardApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        if !self.positioned {
-            if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-                let w = self.model.config.width_px as f32 + 2.0 * GLOW_PAD;
-                let h = self.model.config.height_px as f32 + 2.0 * GLOW_PAD;
-                let x = (monitor.x - w) / 2.0;
-                let y = (monitor.y * self.model.config.top_margin.clamp(0.0, 1.0) - GLOW_PAD)
-                    .min(monitor.y - h - self.model.config.margin_px as f32);
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-                self.positioned = true;
-            }
-        }
+        let visible = self.model.poll();
 
-        if !self.model.poll() {
+        // Place the card when it is about to appear, not once at startup: the
+        // pointer may have moved to another display between two dictations,
+        // and `monitor_size` alone cannot say where that display begins.
+        // Moving the viewport takes effect next frame, so skip drawing this
+        // one — otherwise the card flashes at its previous spot.
+        if visible && !self.was_visible {
+            self.was_visible = true;
+            let (x, y) = card_origin(cursor_display_bounds(), &self.model.config);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+            ctx.request_repaint();
+            return;
+        }
+        self.was_visible = visible;
+
+        if !visible {
             ctx.request_repaint_after(STATE_POLL);
             return;
         }
@@ -108,9 +171,70 @@ pub fn run(model: Model) -> anyhow::Result<()> {
             Ok(Box::new(CardApp {
                 model,
                 texture: None,
-                positioned: false,
+                was_visible: false,
             }))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{card_origin, GLOW_PAD};
+    use crate::osd::config::OsdConfig;
+
+    /// The real displays of a docked MacBook, as CoreGraphics reports them.
+    const MACBOOK: (f32, f32, f32, f32) = (0.0, 0.0, 2056.0, 1329.0);
+    const ABOVE: (f32, f32, f32, f32) = (0.0, -1440.0, 2560.0, 1440.0);
+    const LEFT_PORTRAIT: (f32, f32, f32, f32) = (-1440.0, -1782.0, 1440.0, 2560.0);
+
+    fn config() -> OsdConfig {
+        OsdConfig::default()
+    }
+
+    #[test]
+    fn centred_on_the_primary_display() {
+        let cfg = config();
+        let (x, _) = card_origin(MACBOOK, &cfg);
+        let card_width = cfg.width_px as f32 + 2.0 * GLOW_PAD;
+        assert_eq!(x, (2056.0 - card_width) / 2.0);
+    }
+
+    #[test]
+    fn a_displays_origin_is_added() {
+        // The regression this guards: a card laid out as though every display
+        // began at (0, 0) lands on the primary one, whatever screen is in use.
+        let cfg = config();
+        let (x_above, y_above) = card_origin(ABOVE, &cfg);
+        assert!(y_above < 0.0, "a display above the primary has negative y");
+        assert!(
+            y_above >= -1440.0 && y_above < 0.0,
+            "y={y_above} should sit inside the display's own band"
+        );
+
+        let (x_left, y_left) = card_origin(LEFT_PORTRAIT, &cfg);
+        assert!(x_left < 0.0, "a display left of the primary has negative x");
+        assert!(
+            y_left >= -1782.0 && y_left < 778.0,
+            "y={y_left} should sit inside the portrait display"
+        );
+
+        // Each display centres the card on its own width, so the three differ.
+        let (x_main, _) = card_origin(MACBOOK, &cfg);
+        assert_ne!(x_main, x_above);
+        assert_ne!(x_main, x_left);
+    }
+
+    #[test]
+    fn never_pushed_past_the_bottom_edge() {
+        let mut cfg = config();
+        cfg.top_margin = 1.0;
+        let (_, y) = card_origin(ABOVE, &cfg);
+        let card_height = cfg.height_px as f32 + 2.0 * GLOW_PAD;
+        let bottom = -1440.0 + 1440.0;
+        assert!(
+            y + card_height <= bottom,
+            "y={y} plus the card height must stay above {bottom}"
+        );
+    }
 }
