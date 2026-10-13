@@ -117,12 +117,43 @@ jobs:
           codesign --force --deep --sign - --preserve-metadata=entitlements "releases/$VERSION/Voxtype.app"
           codesign --verify --deep --strict --verbose=2 "releases/$VERSION/Voxtype.app"
           VOXTYPE_SKIP_APP=1 ./scripts/build-macos-dmg.sh "$VERSION"
+          # A zip beside the DMG: a deployment script expands a zip in place,
+          # where a DMG needs hdiutil and a mount point. ditto after the
+          # sealing above, and with --keepParent, so the bundle and its
+          # signature travel intact. The DMG step copies the .app rather than
+          # moving it, so it is still here.
+          ditto -c -k --keepParent "releases/$VERSION/Voxtype.app" \
+            "releases/$VERSION/Voxtype-macos-arm64.app.zip"
+          # Checksums over everything a consumer might stage, so it can verify
+          # the bytes and not just the file names: a partly-synced copy keeps
+          # the right name. The script writes its own DMG-only
+          # macos-SHA256SUMS.txt, which stays a local build artifact.
+          # Relative names, so `shasum -c SHA256SUMS.txt` works after download.
+          ( cd "releases/$VERSION" \
+            && shasum -a 256 \
+                 *.dmg \
+                 Voxtype-macos-arm64.app.zip \
+                 "voxtype-$VERSION-macos-arm64" \
+                 libonnxruntime.*.dylib \
+               > SHA256SUMS.txt )
+          cat "releases/$VERSION/SHA256SUMS.txt"
           ls -la "releases/$VERSION"
 
       - uses: actions/upload-artifact@v4
         with:
           name: voxtype-macos-aarch64-dmg
-          path: releases/${{ env.VERSION }}/*.dmg
+          path: |
+            releases/${{ env.VERSION }}/*.dmg
+            releases/${{ env.VERSION }}/SHA256SUMS.txt
+
+      # Separate from the DMG so a deployment can fetch just the bundle. The
+      # checksums ride along in both, keeping each artifact verifiable alone.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxtype-macos-aarch64-app-zip
+          path: |
+            releases/${{ env.VERSION }}/Voxtype-macos-arm64.app.zip
+            releases/${{ env.VERSION }}/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
