@@ -98,13 +98,20 @@ pub(crate) async fn dispatch(
             // First-launch auto-setup: create config and download model if needed
             super::macos::first_launch_setup(&config).await;
 
-            // Kill any existing instances
-            let _ = std::process::Command::new("pkill")
-                .args(["-9", "-f", "voxtype-bin daemon"])
-                .status();
-            let _ = std::process::Command::new("pkill")
-                .args(["-9", "-f", "voxtype-bin menubar"])
-                .status();
+            // Kill any existing instances. The recording card is swept too:
+            // a card left behind by a crashed daemon is a live process from
+            // this bundle, which keeps macOS counting Voxtype.app as running,
+            // so launching the app would only activate the ghost. A user
+            // without a terminal has no way out of that.
+            for stale in [
+                "voxtype-bin daemon",
+                "voxtype-bin menubar",
+                "voxtype-bin osd-card",
+            ] {
+                let _ = std::process::Command::new("pkill")
+                    .args(["-9", "-f", stale])
+                    .status();
+            }
             let _ = std::fs::remove_file("/tmp/voxtype/voxtype.lock");
             let _ = std::fs::remove_file("/tmp/voxtype/menubar.lock");
 
