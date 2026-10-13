@@ -84,8 +84,10 @@ pub fn run(model: Model) -> anyhow::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Voxtype")
         .with_inner_size([w as f32, h as f32])
-        // Off-screen until the monitor size is known, so nothing flashes.
-        .with_position([-10_000.0, -10_000.0])
+        // On-screen from the start: macOS reports no monitor for a window
+        // outside every display, so an off-screen card never learns where to
+        // go. It is transparent until there is something to show.
+        .with_position([0.0, 0.0])
         .with_decorations(false)
         .with_transparent(true)
         .with_resizable(false)
