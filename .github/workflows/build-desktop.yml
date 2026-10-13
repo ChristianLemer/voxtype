@@ -139,6 +139,20 @@ jobs:
           cat "releases/$VERSION/SHA256SUMS.txt"
           ls -la "releases/$VERSION"
 
+      # Prove the zip rather than trust it. A bundle can be archived in a way
+      # that drops its _CodeSignature resources: the zip looks fine, and only
+      # a verify *after* extraction says otherwise. A sibling project shipped
+      # exactly that for months, under both ditto and unzip, because nothing
+      # checked. Cheap here, and it fails the build instead of a user's Mac.
+      - name: Verify the app zip survives a round trip
+        run: |
+          rm -rf /tmp/zipcheck && mkdir -p /tmp/zipcheck
+          ditto -x -k "releases/$VERSION/Voxtype-macos-arm64.app.zip" /tmp/zipcheck
+          codesign --verify --deep --strict --verbose=2 /tmp/zipcheck/Voxtype.app
+          /tmp/zipcheck/Voxtype.app/Contents/MacOS/voxtype-bin --version
+          ( cd "releases/$VERSION" && shasum -a 256 -c SHA256SUMS.txt )
+          rm -rf /tmp/zipcheck
+
       - uses: actions/upload-artifact@v4
         with:
           name: voxtype-macos-aarch64-dmg
