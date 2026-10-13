@@ -1,20 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// Closing the window quits the settings app.
-///
 /// A WindowGroup app stays alive with no windows once its last one is closed,
-/// and macOS answers a second "Settings…" by merely activating that windowless
-/// process: nothing appears on screen and the menu item looks broken. Quitting
-/// instead means every click opens a fresh window. A settings panel reached
-/// from the menu bar has nothing to stay running for.
+/// and macOS answers the next "Settings…" by merely activating that windowless
+/// process: nothing appears and the menu item looks broken.
+///
+/// `applicationShouldTerminateAfterLastWindowClosed` looks like the cure and is
+/// a trap: AppKit asks it during launch, before SwiftUI has made its window,
+/// sees no windows and quits on the spot — the app became unlaunchable.
+/// Measured, not guessed. So the menu bar sweeps a stale settings process
+/// before opening a new one, and all this delegate does is ask macOS for a
+/// window back when the app is reopened with none on screen.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
-    }
-
-    /// Belt and braces: should this process ever outlive its window anyway,
-    /// a reopen must put a window back rather than silently do nothing.
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows: Bool

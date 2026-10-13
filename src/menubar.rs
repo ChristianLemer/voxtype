@@ -121,8 +121,10 @@ fn on_air_badge() -> tray_icon::Icon {
     let width = (columns as f32 * DOT + 2.0 * PAD_X) as u32;
     let mut pixmap = Pixmap::new(width, HEIGHT).expect("non-zero badge size");
 
-    let mut paint = Paint::default();
-    paint.anti_alias = true;
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
     paint.set_color(Color::from_rgba8(0xe0, 0x30, 0x30, 0xff));
     if let Some(plate) =
         crate::osd::desktop::card::rounded_rect(0.0, 2.0, width as f32, HEIGHT as f32 - 4.0, 6.0)
@@ -259,6 +261,69 @@ fn open_console(args: &[&str]) {
 #[cfg(target_os = "macos")]
 fn open_path(path: &str) {
     let _ = std::process::Command::new("open").arg(path).spawn();
+}
+
+/// Matches the settings executable and nothing else — notably not
+/// `voxtype-bin`, whose command line never contains this path.
+#[cfg(target_os = "macos")]
+const SETTINGS_PROCESS: &str = "VoxtypeSetup.app/Contents/MacOS/VoxtypeSetup";
+
+/// End a settings process left running with no windows, and wait for it to go.
+///
+/// Closing the window does not quit a SwiftUI `WindowGroup` app, and macOS
+/// answers `open` on an already-running app by activating it — so without this
+/// the second "Settings…" silently does nothing at all. Killing an instance
+/// the user is looking at costs nothing: the window reads the config afresh
+/// when it reopens.
+///
+/// The wait matters. `pkill` returns once the signal is sent, not once the
+/// process is gone, and `open` on a corpse macOS still counts as running would
+/// activate it and show nothing — the very bug being fixed, back by a
+/// different door.
+#[cfg(target_os = "macos")]
+fn sweep_settings_app() {
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", SETTINGS_PROCESS])
+        .status();
+
+    for _ in 0..40 {
+        let gone = std::process::Command::new("pgrep")
+            .args(["-f", SETTINGS_PROCESS])
+            .output()
+            .map(|o| o.stdout.is_empty())
+            .unwrap_or(true);
+        if gone {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Open the settings window, insisting until macOS agrees.
+///
+/// Waiting for the old process to die is not enough: for a moment afterwards
+/// `open` answers -600, procNotFound, because LaunchServices clears its
+/// registration a beat later than the kernel reaps the process. Measured — one
+/// cycle in three failed this way. Retrying costs nothing; a menu item that
+/// silently does nothing is exactly the bug being fixed. If it never takes,
+/// say so rather than leave the user guessing.
+#[cfg(target_os = "macos")]
+fn open_settings_app(app: &std::path::Path) {
+    for _ in 0..15 {
+        let opened = std::process::Command::new("open")
+            .arg(app)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if opened {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    notify(
+        "Voxtype",
+        "Could not open the settings window. Try quitting and reopening Voxtype.",
+    );
 }
 
 /// The settings window, VoxtypeSetup.app, which Voxtype.app carries next to
@@ -879,7 +944,16 @@ pub fn run(state_file: PathBuf) -> ! {
                 #[cfg(target_os = "macos")]
                 menu_ids::SETTINGS => {
                     if let Some(app) = settings_app() {
-                        open_path(app.to_str().unwrap_or(""));
+                        // Sweep a settings process left running with no
+                        // windows. Closing the window does not quit a
+                        // SwiftUI WindowGroup app, and macOS answers `open`
+                        // on an already-running app by activating it — so
+                        // without this the second "Settings…" silently does
+                        // nothing at all. Killing an instance the user is
+                        // looking at costs nothing: the window reads the
+                        // config afresh when it reopens.
+                        sweep_settings_app();
+                        open_settings_app(&app);
                     }
                 }
                 menu_ids::OPEN_CONFIG => {
