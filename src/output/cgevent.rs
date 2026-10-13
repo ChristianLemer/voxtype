@@ -146,16 +146,21 @@ impl CGEventOutput {
             utf16_buf.extend_from_slice(encoded);
         }
 
-        // Create key down event with Unicode string
+        // Create key down event with Unicode string. Flags are cleared because
+        // a HIDSystemState event inherits the hardware modifier state: after an
+        // F13-F20 hotkey that includes Fn, and keycode 0 with Fn is the system
+        // shortcut Fn+A (focus the Dock), which swallows the text.
         let event = CGEvent::new_keyboard_event(source.clone(), 0, true)
             .map_err(|_| OutputError::InjectionFailed("Failed to create keyboard event".into()))?;
 
+        event.set_flags(CGEventFlags::CGEventFlagNull);
         event.set_string_from_utf16_unchecked(&utf16_buf);
         event.post(CGEventTapLocation::HID);
 
         // Key up event
         let event_up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| OutputError::InjectionFailed("Failed to create key up event".into()))?;
+        event_up.set_flags(CGEventFlags::CGEventFlagNull);
         event_up.post(CGEventTapLocation::HID);
 
         Ok(())
