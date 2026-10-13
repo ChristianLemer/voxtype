@@ -796,6 +796,22 @@ fn cleanup_model_override() {
 /// Result type for transcription task
 type TranscriptionResult = std::result::Result<String, crate::error::TranscribeError>;
 
+/// Short, user-facing wording for an audio failure. The error's own `Display`
+/// carries the full device list, which suits a log line and is far too long
+/// for a notification.
+fn audio_failure_message(err: &crate::error::AudioError) -> String {
+    use crate::error::AudioError;
+    match err {
+        AudioError::DeviceNotFound(requested)
+        | AudioError::DeviceNotFoundWithList { requested, .. } => format!(
+            "Microphone \"{}\" not found. Choose another one in Settings, or set \
+             audio.device to \"default\" to follow the system.",
+            requested
+        ),
+        other => other.to_string(),
+    }
+}
+
 /// Main daemon that orchestrates all components
 pub struct Daemon {
     config: Config,
@@ -822,6 +838,11 @@ pub struct Daemon {
     /// cleared) by `stop_active_recording` to decide whether to run
     /// `external_trigger_stop_command`.
     is_external_trigger: bool,
+    /// Last audio-failure message shown to the user, so holding the hotkey
+    /// down against a missing microphone notifies once instead of once per
+    /// attempt. Cleared whenever audio starts, so a later failure speaks up
+    /// again.
+    last_audio_error: Option<String>,
     /// Synthetic zero-level publisher that keeps the OSD visible while a
     /// streaming session is draining server-side after the mic stopped.
     /// Aborted in `end_streaming`.
@@ -968,6 +989,7 @@ impl Daemon {
             level_emitter_task: None,
             silence_tracker: None,
             is_external_trigger: false,
+            last_audio_error: None,
             streaming_drain_pump: None,
             osd_supervisor_task: None,
             model_manager: None,
@@ -988,6 +1010,19 @@ impl Daemon {
             paused_media_players: Vec::new(),
             ducked_media_streams: Vec::new(),
             media_fade_task: None,
+        }
+    }
+
+    /// Log an audio failure, play the error cue, and tell the user — once per
+    /// distinct message, since a held hotkey retries several times a second.
+    async fn report_audio_failure(&mut self, err: &crate::error::AudioError) {
+        tracing::error!("Failed to start audio: {}", err);
+        self.play_feedback(SoundEvent::Error);
+
+        let message = audio_failure_message(err);
+        if self.last_audio_error.as_deref() != Some(message.as_str()) {
+            crate::notification::send("Voxtype", &message).await;
+            self.last_audio_error = Some(message);
         }
     }
 
@@ -1163,11 +1198,11 @@ impl Daemon {
                     if let Some(handle) = handle {
                         self.level_emitter_task = Some(handle);
                     }
+                    self.last_audio_error = None;
                     Ok(capture)
                 }
                 Err(e) => {
-                    tracing::error!("Failed to start audio: {}", e);
-                    self.play_feedback(SoundEvent::Error);
+                    self.report_audio_failure(&e).await;
                     Err(())
                 }
             },
@@ -1722,11 +1757,11 @@ impl Daemon {
                         })
                     };
                     self.level_emitter_task = Some(handle);
+                    self.last_audio_error = None;
                     Ok((capture, streaming_rx))
                 }
                 Err(e) => {
-                    tracing::error!("Failed to start audio: {}", e);
-                    self.play_feedback(SoundEvent::Error);
+                    self.report_audio_failure(&e).await;
                     Err(())
                 }
             },
@@ -5039,5 +5074,39 @@ mod tests {
             assert!(!cleaned, "Lockfile with running PID should not be cleaned");
             assert!(lock_path.exists(), "Lockfile should still exist");
         });
+    }
+}
+
+#[cfg(test)]
+mod audio_failure_tests {
+    use super::audio_failure_message;
+    use crate::error::AudioError;
+
+    #[test]
+    fn missing_device_names_it_and_offers_a_way_out() {
+        let msg = audio_failure_message(&AudioError::DeviceNotFoundWithList {
+            requested: "Elgato Wave:3".to_string(),
+            available: "Available devices:\n  - MacBook Pro Microphone".to_string(),
+        });
+        assert!(msg.contains("Elgato Wave:3"), "names the missing device");
+        assert!(msg.contains("default"), "points at the escape hatch");
+        // The device list belongs in the log, not in a notification.
+        assert!(!msg.contains("Available devices"));
+    }
+
+    #[test]
+    fn both_device_variants_read_the_same() {
+        let with_list = audio_failure_message(&AudioError::DeviceNotFoundWithList {
+            requested: "Mic".to_string(),
+            available: String::new(),
+        });
+        let bare = audio_failure_message(&AudioError::DeviceNotFound("Mic".to_string()));
+        assert_eq!(with_list, bare);
+    }
+
+    #[test]
+    fn other_failures_keep_their_own_wording() {
+        let msg = audio_failure_message(&AudioError::EmptyRecording);
+        assert_eq!(msg, AudioError::EmptyRecording.to_string());
     }
 }
