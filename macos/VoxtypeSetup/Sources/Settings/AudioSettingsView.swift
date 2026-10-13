@@ -116,9 +116,11 @@ struct AudioSettingsView: View {
         // Use the older API for macOS 13 compatibility
         let devices = AVCaptureDevice.devices(for: .audio)
 
+        // The daemon looks devices up by name (cpal), not by CoreAudio UID,
+        // so the name is what gets written to config.toml.
         for device in devices {
             availableDevices.append(AudioDeviceInfo(
-                id: device.uniqueID,
+                id: device.localizedName,
                 name: device.localizedName
             ))
         }
