@@ -146,9 +146,130 @@ fn launch() -> Result<PathBuf, StartError> {
     Err(StartError::NoBundle)
 }
 
+// ---------------------------------------------------------------------------
+// restart
+// ---------------------------------------------------------------------------
+
+/// How long processes get to leave on SIGTERM before they are killed. The
+/// daemon tears down its recording card and level socket on the way out,
+/// which takes well under a second.
+const GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Stop everything voxtype is running, then start it afresh.
+///
+/// `start` is idempotent by design and so does nothing to a voxtype that is
+/// already up — which leaves `config apply` changing a key the daemon will
+/// not see until something restarts it. This is that something. When nothing
+/// was running it simply starts, so it is safe to call either way.
+///
+/// Every process is stopped, the app's own menu-bar process included. Leave
+/// that one and macOS keeps counting Voxtype.app as running, so the launch
+/// that follows only activates it and no daemon comes back.
+pub fn restart() -> Result<Started, StartError> {
+    stop_all();
+    // Stale locks name pids that no longer exist. The daemon checks the pid
+    // itself, but removing them keeps a crashed run from looking alive.
+    let runtime = crate::config::Config::runtime_dir();
+    let _ = std::fs::remove_file(runtime.join("voxtype.lock"));
+    let _ = std::fs::remove_file(runtime.join("menubar.lock"));
+    start()
+}
+
+/// The command lines of every voxtype process to stop on macOS. The bare
+/// bundle executable is the app's main process — menu bar and launcher — and
+/// is matched exactly, so `voxtype-bin restart` (this very process) and any
+/// unrelated command never match it.
+#[cfg(target_os = "macos")]
+fn pids_to_stop() -> Vec<u32> {
+    let exe = crate::setup::app_bundle::app_binary_path();
+    let exe = exe.to_string_lossy();
+    let mut pids = Vec::new();
+
+    let mut collect = |args: &[&str]| {
+        if let Ok(out) = std::process::Command::new("pgrep").args(args).output() {
+            pids.extend(
+                String::from_utf8_lossy(&out.stdout)
+                    .split_whitespace()
+                    .filter_map(|p| p.parse::<u32>().ok()),
+            );
+        }
+    };
+    collect(&["-fx", &exe]);
+    for role in ["daemon", "menubar", "osd-card"] {
+        collect(&["-f", &format!("voxtype-bin {role}")]);
+    }
+
+    let me = std::process::id();
+    pids.retain(|p| *p != me);
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+#[cfg(target_os = "macos")]
+fn stop_all() {
+    let signal = |sig: &str, pids: &[u32]| {
+        if pids.is_empty() {
+            return;
+        }
+        let list: Vec<String> = pids.iter().map(u32::to_string).collect();
+        let _ = std::process::Command::new("kill")
+            .arg(sig)
+            .args(&list)
+            .status();
+    };
+
+    let pids = pids_to_stop();
+    signal("-TERM", &pids);
+
+    let deadline = std::time::Instant::now() + GRACE;
+    while std::time::Instant::now() < deadline && !pids_to_stop().is_empty() {
+        std::thread::sleep(POLL);
+    }
+    // Anything still there after the grace period is hung, not busy.
+    signal("-KILL", &pids_to_stop());
+
+    // LaunchServices drops a dead app's registration a beat after the kernel
+    // reaps it; `open` in that window fails with -600. Wait it out here so the
+    // start that follows is not racing a ghost.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+/// Every voxtype.exe except this one. Windows has no graceful signal a
+/// windowless process answers, so it is a forced stop.
+#[cfg(windows)]
+fn stop_all() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let me = std::process::id();
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/FI", "IMAGENAME eq voxtype.exe", "/FI"])
+        .arg(format!("PID ne {me}"))
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn stop_all() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_grace_period_is_short_but_not_instant() {
+        assert!(GRACE >= std::time::Duration::from_secs(1));
+        assert!(GRACE <= std::time::Duration::from_secs(10));
+    }
+
+    /// The process doing the restart must never be on its own kill list,
+    /// whatever its command line looks like.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn restart_never_targets_itself() {
+        assert!(!pids_to_stop().contains(&std::process::id()));
+    }
 
     /// The wait has to outlast a model load, or an installer would report
     /// failure while the daemon was still starting.

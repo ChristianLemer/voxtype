@@ -14,6 +14,21 @@ pub enum Commands {
     #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
+    /// Stop voxtype and start it again, so changed settings take effect
+    #[cfg(any(target_os = "macos", windows))]
+    #[command(long_about = "\
+        Stop voxtype and start it again, so changed settings take effect\n\n\
+        `voxtype start` leaves a running voxtype alone, so after `config apply` \
+        changes a key the daemon only reads at startup, something has to \
+        restart it. When nothing is running this just starts, so it is safe to \
+        call either way.\n\n\
+        Everything is stopped, the menu-bar icon included, then brought back \
+        the same way `voxtype start` does. Processes get a few seconds to exit \
+        cleanly before they are killed.\n\n\
+        Exit codes: 0 when voxtype is up again, 2 when Voxtype.app cannot be \
+        found, 1 when the launch failed or the daemon never answered.")]
+    Restart,
+
     /// Start voxtype at login
     #[cfg(any(target_os = "macos", windows))]
     Autostart {

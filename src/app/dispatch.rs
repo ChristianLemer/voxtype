@@ -135,6 +135,15 @@ pub(crate) async fn dispatch(
         }
 
         #[cfg(any(target_os = "macos", windows))]
+        Commands::Restart => match voxtype::setup::start::restart() {
+            Ok(_) => println!("Restarted."),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                std::process::exit(e.exit_code());
+            }
+        },
+
+        #[cfg(any(target_os = "macos", windows))]
         Commands::Start => {
             use voxtype::setup::start::{self, Started};
             match start::start() {
