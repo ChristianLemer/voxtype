@@ -101,6 +101,8 @@ pub mod vad;
 #[cfg(windows)]
 pub mod win;
 
+#[cfg(any(target_os = "macos", windows))]
+pub use cli::AutostartAction;
 pub use cli::{
     Cli, Commands, CompositorType, ConfigAction, InfoAction, MeetingAction, OutputModeOverride,
     RecordAction, SetupAction,

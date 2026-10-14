@@ -13,6 +13,8 @@ mod record;
 mod root;
 mod setup;
 
+#[cfg(any(target_os = "macos", windows))]
+pub use commands::AutostartAction;
 pub use commands::Commands;
 pub use config::ConfigAction;
 pub use info::InfoAction;

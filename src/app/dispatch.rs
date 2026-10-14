@@ -95,6 +95,46 @@ pub(crate) async fn dispatch(
         }
 
         #[cfg(any(target_os = "macos", windows))]
+        Commands::Autostart { action } => {
+            use voxtype::setup::autostart::{self, State};
+            use voxtype::AutostartAction;
+            let outcome = match action {
+                AutostartAction::Enable => autostart::enable().map(|where_| {
+                    println!("Autostart enabled: {}", where_.display());
+                    0
+                }),
+                AutostartAction::Disable => autostart::disable().map(|removed| {
+                    println!(
+                        "{}",
+                        if removed {
+                            "Autostart disabled."
+                        } else {
+                            "Autostart was already disabled."
+                        }
+                    );
+                    0
+                }),
+                AutostartAction::Status => autostart::state().map(|(state, where_)| match state {
+                    State::Enabled => {
+                        println!("Enabled: {}", where_.display());
+                        0
+                    }
+                    State::Disabled => {
+                        println!("Disabled.");
+                        1
+                    }
+                }),
+            };
+            match outcome {
+                Ok(code) => std::process::exit(code),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(e.exit_code());
+                }
+            }
+        }
+
+        #[cfg(any(target_os = "macos", windows))]
         Commands::Start => {
             use voxtype::setup::start::{self, Started};
             match start::start() {

@@ -14,6 +14,13 @@ pub enum Commands {
     #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
+    /// Start voxtype at login
+    #[cfg(any(target_os = "macos", windows))]
+    Autostart {
+        #[command(subcommand)]
+        action: AutostartAction,
+    },
+
     /// Start the daemon and the status icon, or do nothing if already up
     #[cfg(any(target_os = "macos", windows))]
     #[command(long_about = "\
@@ -209,4 +216,43 @@ pub enum Commands {
 
     /// Check for updates
     CheckUpdate,
+}
+
+/// `voxtype autostart` actions.
+#[cfg(any(target_os = "macos", windows))]
+#[derive(clap::Subcommand)]
+pub enum AutostartAction {
+    /// Register voxtype to start at login
+    #[command(long_about = "\
+        Register voxtype to start at login\n\n\
+        What gets registered is `voxtype start`, which brings up the daemon and \
+        the status icon and is harmless to run twice. Registering the daemon on \
+        its own would be a trap: it would not inherit Voxtype.app's microphone \
+        and Accessibility grants, so the machine would boot into a voxtype that \
+        looks alive and cannot dictate.\n\n\
+        On macOS this writes a LaunchAgent, deliberately rather than a Login \
+        Item: Login Items are driven through AppleScript, which needs Automation \
+        consent and would put a dialog in front of an installer with nobody to \
+        answer it. On Windows it sets one HKCU Run value, needing no \
+        administrator rights.\n\n\
+        Enabling twice leaves one registration. Exit codes: 0 on success, 1 on \
+        filesystem or registry failure.")]
+    Enable,
+
+    /// Stop voxtype starting at login
+    #[command(long_about = "\
+        Stop voxtype starting at login\n\n\
+        Removes the registration. Disabling when it is already off succeeds. \
+        Running voxtype now is unaffected — this only changes what happens at \
+        the next login.\n\n\
+        Exit codes: 0 on success, 1 on filesystem or registry failure.")]
+    Disable,
+
+    /// Report whether voxtype starts at login
+    #[command(long_about = "\
+        Report whether voxtype starts at login\n\n\
+        Answers the question an installer asks: will voxtype come up at the \
+        next login?\n\n\
+        Exit codes: 0 when enabled, 1 when not.")]
+    Status,
 }
