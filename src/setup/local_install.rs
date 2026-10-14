@@ -176,6 +176,29 @@ pub fn install_from_dir(
     source: &Path,
     models_dir: &Path,
 ) -> Result<Installed, LocalInstallError> {
+    run(model, source, models_dir, false)
+}
+
+/// Report whether `models_dir` already holds `source`'s copy of `model`,
+/// writing nothing.
+///
+/// This is `install_from_dir` replayed without recording: the same source
+/// checks run, so a damaged kit is refused here too, and `copied` lists the
+/// files an install *would* copy. Empty means the machine matches.
+pub fn check_from_dir(
+    model: &str,
+    source: &Path,
+    models_dir: &Path,
+) -> Result<Installed, LocalInstallError> {
+    run(model, source, models_dir, true)
+}
+
+fn run(
+    model: &str,
+    source: &Path,
+    models_dir: &Path,
+    dry_run: bool,
+) -> Result<Installed, LocalInstallError> {
     let (engine, expected) = lookup(model)?;
     if !source.is_dir() {
         return Err(LocalInstallError::NoSource(source.to_path_buf()));
@@ -183,7 +206,9 @@ pub fn install_from_dir(
 
     let sealed = read_cached_manifest(source).filter(|m| m.model == model);
     let dest = models_dir.join(model);
-    std::fs::create_dir_all(&dest).map_err(io(format!("creating {}", dest.display())))?;
+    if !dry_run {
+        std::fs::create_dir_all(&dest).map_err(io(format!("creating {}", dest.display())))?;
+    }
 
     let mut out = Installed {
         model: model.to_string(),
@@ -239,21 +264,28 @@ pub fn install_from_dir(
             continue;
         }
 
-        copy_verified(&from, &to, &source_hash, name)?;
+        if !dry_run {
+            copy_verified(&from, &to, &source_hash, name)?;
+        }
         out.copied.push(name.clone());
+    }
+
+    if dry_run {
+        return Ok(out);
     }
 
     // Record what the destination now holds, so a later check — ours or
     // anyone's — has hashes to compare against even if the source is gone.
-    write_cached_manifest(
-        &dest,
-        &Manifest {
-            version: 1,
-            model: model.to_string(),
-            engine,
-            files: hashes,
-        },
-    );
+    // Only when it changed: a replay must write nothing, manifest included.
+    let manifest = Manifest {
+        version: 1,
+        model: model.to_string(),
+        engine,
+        files: hashes,
+    };
+    if read_cached_manifest(&dest).as_ref() != Some(&manifest) {
+        write_cached_manifest(&dest, &manifest);
+    }
 
     Ok(out)
 }
@@ -433,5 +465,61 @@ mod tests {
             .filter(|n| n.contains("voxtype-part"))
             .collect();
         assert!(leftovers.is_empty(), "left {leftovers:?}");
+    }
+
+    #[test]
+    fn check_on_an_empty_machine_lists_everything_and_writes_nothing() {
+        let (dir, src, files) = fake_source();
+        let models = dir.path().join("models");
+        let out = check_from_dir(MODEL, &src, &models).unwrap();
+        assert_eq!(out.copied.len(), files.len(), "every file would be copied");
+        assert!(!models.exists(), "check must not even create the directory");
+    }
+
+    #[test]
+    fn check_agrees_with_install_and_passes_afterwards() {
+        let (dir, src, files) = fake_source();
+        let models = dir.path().join("models");
+        install_from_dir(MODEL, &src, &models).unwrap();
+
+        let ok = check_from_dir(MODEL, &src, &models).unwrap();
+        assert!(ok.copied.is_empty(), "matches after install");
+
+        std::fs::write(models.join(MODEL).join(&files[0]), b"half").unwrap();
+        let bad = check_from_dir(MODEL, &src, &models).unwrap();
+        assert_eq!(bad.copied, [files[0].clone()], "names the damaged file");
+        assert_eq!(
+            std::fs::read(models.join(MODEL).join(&files[0])).unwrap(),
+            b"half",
+            "check must report, not repair"
+        );
+    }
+
+    #[test]
+    fn check_refuses_a_damaged_sealed_kit_like_install_does() {
+        let (dir, src, files) = fake_source();
+        seal(MODEL, &src).unwrap();
+        std::fs::write(src.join(&files[0]), b"rot").unwrap();
+        let err = check_from_dir(MODEL, &src, &dir.path().join("models")).unwrap_err();
+        assert!(matches!(err, LocalInstallError::SourceCorrupt { .. }));
+    }
+
+    /// A replay must write nothing, and that includes the manifest: an atom's
+    /// apply that touches a file on every run is not idempotent.
+    #[test]
+    fn a_replay_leaves_the_manifest_untouched() {
+        let (dir, src, _files) = fake_source();
+        let models = dir.path().join("models");
+        install_from_dir(MODEL, &src, &models).unwrap();
+        let path = models
+            .join(MODEL)
+            .join(super::super::manifest::CACHED_MANIFEST_FILENAME);
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        install_from_dir(MODEL, &src, &models).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
     }
 }

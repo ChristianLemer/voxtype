@@ -40,7 +40,18 @@ fn fail(e: config_set::ConfigSetError) -> ! {
 
 fn restart_hint(restart_required: bool) {
     if restart_required {
+        // The way to restart differs per system; systemctl means nothing on
+        // a Mac or a Windows box, and a deployment log is read by people.
+        #[cfg(target_os = "linux")]
         println!("Restart voxtype to apply: systemctl --user restart voxtype");
+        #[cfg(target_os = "macos")]
+        println!("Restart voxtype to apply: quit Voxtype from the menu bar and reopen it");
+        #[cfg(windows)]
+        println!(
+            "Restart voxtype to apply: quit it from the notification area and run `voxtype start`"
+        );
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        println!("Restart voxtype to apply.");
     }
 }
 
@@ -203,6 +214,44 @@ pub(crate) fn run_model_seal(model: &str, dir: &std::path::Path) -> anyhow::Resu
                 dir.display()
             );
             Ok(())
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(e.exit_code());
+        }
+    }
+}
+
+/// Dispatcher for `voxtype setup model --from <DIR> --model <NAME> --check`.
+///
+/// Exits 1 on divergence. That is a result, not a failure, so it goes to
+/// stdout and the process exits quietly rather than printing `error:`.
+pub(crate) fn run_model_check(model: &str, from: &std::path::Path) -> anyhow::Result<()> {
+    use voxtype::setup::local_install;
+
+    let models_dir = config::Config::models_dir();
+    match local_install::check_from_dir(model, from, &models_dir) {
+        Ok(out) if out.copied.is_empty() => {
+            println!(
+                "Matches: {} file(s) of {} as expected in {}",
+                out.unchanged.len(),
+                out.model,
+                out.dest.display()
+            );
+            Ok(())
+        }
+        Ok(out) => {
+            for name in &out.copied {
+                println!("Differs: {}", name);
+            }
+            println!(
+                "{} of {} file(s) of {} differ in {}",
+                out.copied.len(),
+                out.copied.len() + out.unchanged.len(),
+                out.model,
+                out.dest.display()
+            );
+            std::process::exit(1);
         }
         Err(e) => {
             eprintln!("error: {}", e);

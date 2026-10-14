@@ -12,8 +12,8 @@ use voxtype::{config, daemon, setup, transcribe, Cli, Commands, ConfigAction, Se
 use super::config_get::run_config_get;
 use super::config_schema::run_config_schema;
 use super::config_set::{
-    run_config_apply, run_config_check, run_config_set, run_config_unset, run_model_install,
-    run_model_seal,
+    run_config_apply, run_config_check, run_config_set, run_config_unset, run_model_check,
+    run_model_install, run_model_seal,
 };
 use super::config_show::show_config;
 use super::info::run_info_command;
@@ -346,12 +346,18 @@ pub(crate) async fn dispatch(
                     from,
                     seal,
                     model,
+                    check,
                 }) => {
                     warn_if_root("model");
                     if let Some(dir) = from {
                         // `requires = "model"` in the CLI makes the name
                         // present whenever --from is.
-                        run_model_install(&model.unwrap_or_default(), &dir)?;
+                        let name = model.unwrap_or_default();
+                        if check {
+                            run_model_check(&name, &dir)?;
+                        } else {
+                            run_model_install(&name, &dir)?;
+                        }
                     } else if let Some(dir) = seal {
                         run_model_seal(&model.unwrap_or_default(), &dir)?;
                     } else if list {

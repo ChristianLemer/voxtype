@@ -120,14 +120,20 @@ pub enum SetupAction {
         never opens a socket, never needs a terminal, and it does not change \
         which model is active — use `voxtype config apply` or \
         `voxtype setup model --set` for that.\n\n\
-        Exit codes: 0 on success, 2 for an unknown model or a missing or \
-        damaged source, 1 for filesystem failures.\n\n\
+        Add --check to ask whether the machine already matches the source \
+        without writing anything: the same source checks run, and each file \
+        an install would copy is named.\n\n\
+        Exit codes: 0 on success (with --check: already installed), 1 with \
+        --check when a file differs or for filesystem failures, 2 for an \
+        unknown model or a missing or damaged source.\n\n\
         Examples:\n  \
         voxtype setup model --list\n  \
         voxtype setup model --seal ./kit/models/parakeet-tdt-0.6b-v3-int8 \
         --model parakeet-tdt-0.6b-v3-int8\n  \
         voxtype setup model --from ./kit/models/parakeet-tdt-0.6b-v3-int8 \
-        --model parakeet-tdt-0.6b-v3-int8")]
+        --model parakeet-tdt-0.6b-v3-int8\n  \
+        voxtype setup model --from ./kit/models/parakeet-tdt-0.6b-v3-int8 \
+        --model parakeet-tdt-0.6b-v3-int8 --check")]
     Model {
         /// List installed models instead of interactive selection
         #[arg(long)]
@@ -153,6 +159,11 @@ pub enum SetupAction {
         /// Which model --from or --seal is acting on
         #[arg(long, value_name = "NAME")]
         model: Option<String>,
+
+        /// With --from: report whether the model is already installed from
+        /// that source, writing nothing. Exit 0 when it matches, 1 when not
+        #[arg(long, requires = "from")]
+        check: bool,
     },
 
     /// Manage GPU acceleration (Vulkan for Whisper, CUDA/MIGraphX for Parakeet)
