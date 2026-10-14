@@ -1350,6 +1350,10 @@ mod tests {
         assert_eq!(variant_subdir(""), None);
     }
 
+    // Resolving a live process's own binary goes through /proc, which only
+    // Linux has. The rest of the module is portable, so gating just this
+    // keeps `cargo test` green while developing on macOS.
+    #[cfg(target_os = "linux")]
     #[test]
     fn running_variant_reads_the_live_process_not_the_symlink() {
         // Our own pid: /proc/self/exe is the test harness, which is not a
