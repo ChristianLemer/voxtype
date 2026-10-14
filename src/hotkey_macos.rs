@@ -314,7 +314,7 @@ pub fn create_listener(
 
 /// Check if Accessibility permission is granted by trying to create an event tap.
 /// Unlike AXIsProcessTrusted(), this is not cached and reflects the current state.
-fn is_accessibility_granted() -> bool {
+pub(crate) fn is_accessibility_granted() -> bool {
     use core_graphics::event::{
         CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
     };

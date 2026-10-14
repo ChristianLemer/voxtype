@@ -14,6 +14,24 @@ pub enum Commands {
     #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
+    /// Report whether macOS lets voxtype see the hotkey and type the text
+    #[cfg(target_os = "macos")]
+    #[command(long_about = "\
+        Report whether macOS lets voxtype see the hotkey and type the text\n\n\
+        Dictation needs two separate grants, and the symptom differs: without \
+        Input Monitoring the hotkey never fires, and without Accessibility the \
+        text is transcribed and lands nowhere. Both are read without \
+        prompting.\n\n\
+        A live event-tap probe is reported beside them, because a grant can be \
+        present and still not work. An ad hoc signed app has its grant tied to \
+        the exact binary, so rebuilding the app leaves the switch on in System \
+        Settings while macOS quietly refuses the new binary — the daemon then \
+        looks healthy and dictation silently does nothing.\n\n\
+        The microphone is not reported: there is no way to read it without \
+        prompting, and a guess would be worse than saying so.\n\n\
+        Exit codes: 0 when dictation can work, 1 when a grant is missing.")]
+    Permissions,
+
     /// Show the recording card (started by the daemon on Windows and macOS)
     #[cfg(any(target_os = "macos", windows))]
     #[command(hide = true)]

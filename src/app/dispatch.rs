@@ -88,6 +88,11 @@ pub(crate) async fn dispatch(
             menubar::run(state_file);
             // Note: menubar::run() never returns (runs macOS event loop)
         }
+
+        #[cfg(target_os = "macos")]
+        Commands::Permissions => {
+            std::process::exit(voxtype::setup::permissions::report());
+        }
         #[cfg(target_os = "macos")]
         Commands::AppLaunch => {
             // Launched by Voxtype.app: start daemon in background, run menubar in foreground.

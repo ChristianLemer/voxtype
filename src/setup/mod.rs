@@ -27,6 +27,8 @@ pub mod manifest;
 pub mod model;
 pub mod npu;
 pub mod parakeet;
+#[cfg(target_os = "macos")]
+pub mod permissions;
 pub mod progress;
 pub mod quickshell;
 pub mod systemd;
