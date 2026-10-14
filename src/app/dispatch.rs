@@ -11,7 +11,10 @@ use voxtype::{config, daemon, setup, transcribe, Cli, Commands, ConfigAction, Se
 
 use super::config_get::run_config_get;
 use super::config_schema::run_config_schema;
-use super::config_set::{run_config_apply, run_config_check, run_config_set, run_config_unset};
+use super::config_set::{
+    run_config_apply, run_config_check, run_config_set, run_config_unset, run_model_install,
+    run_model_seal,
+};
 use super::config_show::show_config;
 use super::info::run_info_command;
 use super::meeting::run_meeting_command;
@@ -276,9 +279,22 @@ pub(crate) async fn dispatch(
                         setup::dms::print_config();
                     }
                 }
-                Some(SetupAction::Model { list, set, restart }) => {
+                Some(SetupAction::Model {
+                    list,
+                    set,
+                    restart,
+                    from,
+                    seal,
+                    model,
+                }) => {
                     warn_if_root("model");
-                    if list {
+                    if let Some(dir) = from {
+                        // `requires = "model"` in the CLI makes the name
+                        // present whenever --from is.
+                        run_model_install(&model.unwrap_or_default(), &dir)?;
+                    } else if let Some(dir) = seal {
+                        run_model_seal(&model.unwrap_or_default(), &dir)?;
+                    } else if list {
                         setup::model::list_installed();
                     } else if let Some(model_name) = set {
                         setup::model::set_model(&model_name, restart).await?;

@@ -144,3 +144,69 @@ pub(crate) fn run_config_unset(cli_override: Option<PathBuf>, key: &str) -> anyh
         Err(e) => fail(e),
     }
 }
+
+/// Dispatcher for `voxtype setup model --from <DIR> --model <NAME>`.
+pub(crate) fn run_model_install(model: &str, from: &std::path::Path) -> anyhow::Result<()> {
+    use voxtype::setup::local_install;
+
+    let models_dir = config::Config::models_dir();
+    match local_install::install_from_dir(model, from, &models_dir) {
+        Ok(out) => {
+            if out.copied.is_empty() {
+                println!(
+                    "Already installed: {} file(s) of {} match in {}",
+                    out.unchanged.len(),
+                    out.model,
+                    out.dest.display()
+                );
+            } else {
+                for name in &out.copied {
+                    println!("Installed {}", name);
+                }
+                println!(
+                    "Installed {} of {} file(s) of {} into {}",
+                    out.copied.len(),
+                    out.copied.len() + out.unchanged.len(),
+                    out.model,
+                    out.dest.display()
+                );
+            }
+            // Say which guarantee was actually obtained, rather than letting
+            // "verified" stand for two different strengths of evidence.
+            if !out.source_was_sealed {
+                println!(
+                    "Note: the source carries no sealed manifest, so the copy was \
+                     verified against it but the source itself could not be \
+                     vouched for. Seal the kit with `voxtype setup model --seal`."
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(e.exit_code());
+        }
+    }
+}
+
+/// Dispatcher for `voxtype setup model --seal <DIR> --model <NAME>`.
+pub(crate) fn run_model_seal(model: &str, dir: &std::path::Path) -> anyhow::Result<()> {
+    use voxtype::setup::local_install;
+
+    match local_install::seal(model, dir) {
+        Ok(manifest) => {
+            let total: u64 = manifest.files.iter().map(|f| f.size).sum();
+            println!(
+                "Sealed {} file(s), {:.1} MB, in {}",
+                manifest.files.len(),
+                total as f64 / 1_048_576.0,
+                dir.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(e.exit_code());
+        }
+    }
+}

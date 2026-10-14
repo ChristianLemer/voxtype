@@ -1,6 +1,7 @@
 //! `voxtype setup` subcommand actions and compositor variants.
 
 use clap::Subcommand;
+use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum SetupAction {
@@ -106,6 +107,27 @@ pub enum SetupAction {
     },
 
     /// Interactive model selection and download
+    #[command(long_about = "\
+        Interactive model selection and download\n\n\
+        With --from, installs a model from a local directory instead, touching \
+        no network: for a machine behind a proxy that fails closed, or a fleet \
+        where the model travels inside a kit. Every file is verified by sha256 \
+        — on arrival against the source, and against the kit's own sealed \
+        manifest when --seal was used to make one. A file with the right name \
+        and the wrong bytes, which is what a half-finished sync leaves behind, \
+        is replaced rather than accepted.\n\n\
+        Running --from twice copies nothing the second time. It never prompts, \
+        never opens a socket, never needs a terminal, and it does not change \
+        which model is active — use `voxtype config apply` or \
+        `voxtype setup model --set` for that.\n\n\
+        Exit codes: 0 on success, 2 for an unknown model or a missing or \
+        damaged source, 1 for filesystem failures.\n\n\
+        Examples:\n  \
+        voxtype setup model --list\n  \
+        voxtype setup model --seal ./kit/models/parakeet-tdt-0.6b-v3-int8 \
+        --model parakeet-tdt-0.6b-v3-int8\n  \
+        voxtype setup model --from ./kit/models/parakeet-tdt-0.6b-v3-int8 \
+        --model parakeet-tdt-0.6b-v3-int8")]
     Model {
         /// List installed models instead of interactive selection
         #[arg(long)]
@@ -118,6 +140,19 @@ pub enum SetupAction {
         /// Restart the daemon after changing model (use with --set)
         #[arg(long)]
         restart: bool,
+
+        /// Install from this local directory instead of downloading
+        #[arg(long, value_name = "DIR", requires = "model")]
+        from: Option<PathBuf>,
+
+        /// Hash this directory's files into a manifest it can later be
+        /// verified against, for staging a kit
+        #[arg(long, value_name = "DIR", requires = "model", conflicts_with = "from")]
+        seal: Option<PathBuf>,
+
+        /// Which model --from or --seal is acting on
+        #[arg(long, value_name = "NAME")]
+        model: Option<String>,
     },
 
     /// Manage GPU acceleration (Vulkan for Whisper, CUDA/MIGraphX for Parakeet)

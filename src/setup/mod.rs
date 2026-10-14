@@ -20,6 +20,7 @@ pub mod gpu;
 #[cfg(target_os = "macos")]
 pub mod hammerspoon;
 pub mod launchd;
+pub mod local_install;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod manifest;
