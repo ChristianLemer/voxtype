@@ -93,6 +93,21 @@ pub(crate) async fn dispatch(
         Commands::Permissions => {
             std::process::exit(voxtype::setup::permissions::report());
         }
+
+        #[cfg(any(target_os = "macos", windows))]
+        Commands::Start => {
+            use voxtype::setup::start::{self, Started};
+            match start::start() {
+                Ok(Started::AlreadyRunning) => println!("Already running."),
+                Ok(Started::Launched { path }) => {
+                    println!("Started {}", path.display())
+                }
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(e.exit_code());
+                }
+            }
+        }
         #[cfg(target_os = "macos")]
         Commands::AppLaunch => {
             // Launched by Voxtype.app: start daemon in background, run menubar in foreground.

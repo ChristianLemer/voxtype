@@ -14,6 +14,24 @@ pub enum Commands {
     #[cfg(any(target_os = "macos", windows))]
     Menubar,
 
+    /// Start the daemon and the status icon, or do nothing if already up
+    #[cfg(any(target_os = "macos", windows))]
+    #[command(long_about = "\
+        Start the daemon and the status icon, or do nothing if already up\n\n\
+        One gesture that leaves the machine dictating and exits 0, whether or \
+        not anything was already running, and the same on macOS and Windows so \
+        one installer step serves both. Running it twice is harmless.\n\n\
+        The icon is started too, not as decoration: it is how someone who does \
+        not live in a terminal sees that voxtype is running and reaches its \
+        settings.\n\n\
+        On macOS this launches Voxtype.app rather than a bare daemon. The two \
+        are not interchangeable — a daemon started on its own does not inherit \
+        the bundle's microphone and Accessibility grants, and dictation then \
+        fails silently.\n\n\
+        Exit codes: 0 when voxtype is up, 2 when Voxtype.app cannot be found, \
+        1 when the launch failed or the daemon never answered.")]
+    Start,
+
     /// Report whether macOS lets voxtype see the hotkey and type the text
     #[cfg(target_os = "macos")]
     #[command(long_about = "\

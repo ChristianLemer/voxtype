@@ -31,6 +31,7 @@ pub mod parakeet;
 pub mod permissions;
 pub mod progress;
 pub mod quickshell;
+pub mod start;
 pub mod systemd;
 pub mod vad;
 pub mod variant_check;
