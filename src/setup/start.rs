@@ -33,9 +33,13 @@ pub enum StartError {
 
     #[error(
         "launched {path} but the daemon did not come up within {secs}s.\n  \
-         Look at ~/Library/Logs/voxtype/stdout.log."
+         Look at {log}."
     )]
-    NeverCameUp { path: PathBuf, secs: u64 },
+    NeverCameUp {
+        path: PathBuf,
+        secs: u64,
+        log: String,
+    },
 }
 
 impl StartError {
@@ -84,6 +88,7 @@ pub fn start() -> Result<Started, StartError> {
     Err(StartError::NeverCameUp {
         path,
         secs: WAIT.as_secs(),
+        log: log_hint(),
     })
 }
 
@@ -116,26 +121,85 @@ fn launch() -> Result<PathBuf, StartError> {
 /// `autostart` a single thing to register.
 #[cfg(windows)]
 fn launch() -> Result<PathBuf, StartError> {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
     let exe = std::env::current_exe().map_err(|source| StartError::Launch {
         path: PathBuf::from("voxtype.exe"),
         source,
     })?;
 
-    for arg in ["daemon", "menubar"] {
-        std::process::Command::new(&exe)
-            .arg(arg)
-            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|source| StartError::Launch {
-                path: exe.clone(),
-                source,
-            })?;
+    let daemon_log = daemon_log_path();
+    for (arg, log) in [("daemon", daemon_log.as_deref()), ("menubar", None)] {
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg(arg);
+        spawn_detached(&mut cmd, log).map_err(|source| StartError::Launch {
+            path: exe.clone(),
+            source,
+        })?;
     }
     Ok(exe)
+}
+
+/// Where a daemon started by `start` writes its log on Windows. macOS needs
+/// none of this: the app's own launcher already logs to ~/Library/Logs.
+#[cfg(windows)]
+fn daemon_log_path() -> Option<PathBuf> {
+    let dir = crate::config::Config::data_dir().join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("daemon.log"))
+}
+
+/// Where to tell the user to look when the daemon never comes up.
+fn log_hint() -> String {
+    #[cfg(target_os = "macos")]
+    return "~/Library/Logs/voxtype/stdout.log".to_string();
+    #[cfg(windows)]
+    return daemon_log_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "the daemon's log".to_string());
+    #[cfg(not(any(target_os = "macos", windows)))]
+    return "the daemon's log".to_string();
+}
+
+/// Spawn a long-lived child that holds none of this process's standard
+/// handles.
+///
+/// The default — inherit — is a trap for a launcher. A child that inherits
+/// stdout keeps the caller's pipe open for as long as it lives, so anything
+/// reading this command's output waits for an end of file that only comes
+/// when the daemon exits: an installer capturing `voxtype restart` hung until
+/// it was killed. Measured on Windows, by Saul's Talos atom. stdin and stderr
+/// go the same way, and the daemon's output goes to `log` instead of being
+/// lost.
+#[cfg(any(windows, test))]
+fn spawn_detached(
+    cmd: &mut std::process::Command,
+    log: Option<&std::path::Path>,
+) -> std::io::Result<std::process::Child> {
+    use std::process::Stdio;
+
+    let (out, err) = match log.and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    }) {
+        Some(file) => {
+            let second = file.try_clone()?;
+            (Stdio::from(file), Stdio::from(second))
+        }
+        None => (Stdio::null(), Stdio::null()),
+    };
+    cmd.stdin(Stdio::null()).stdout(out).stderr(err);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
 }
 
 /// Linux starts voxtype through systemd, which already owns "start it, and do
@@ -289,6 +353,7 @@ mod tests {
         let e = StartError::NeverCameUp {
             path: PathBuf::from("/Applications/Voxtype.app"),
             secs: 20,
+            log: "~/Library/Logs/voxtype/stdout.log".to_string(),
         };
         assert_eq!(e.exit_code(), 1);
         assert!(
@@ -306,6 +371,101 @@ mod tests {
             Started::Launched {
                 path: PathBuf::from("/Applications/Voxtype.app")
             }
+        );
+    }
+
+    // -- the captured-pipe regression ------------------------------------
+    //
+    // The bug: a launcher whose output is captured never finishes reading,
+    // because the daemon it spawned inherited the pipe and keeps it open.
+    // Reproducing it needs three processes — reader, launcher, long-lived
+    // child — so the test re-runs its own binary as the launcher.
+
+    const LAUNCHER_ENV: &str = "VOXTYPE_TEST_DETACH_LAUNCHER";
+
+    /// A command that outlives the launcher by far, on either system.
+    fn sleeper() -> std::process::Command {
+        #[cfg(windows)]
+        {
+            let mut c = std::process::Command::new("ping");
+            c.args(["-n", "31", "127.0.0.1"]);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let mut c = std::process::Command::new("sleep");
+            c.arg("30");
+            c
+        }
+    }
+
+    /// The launcher's half. Inert unless the outer test sets the variable,
+    /// so a plain `cargo test` run passes straight through it.
+    #[test]
+    // Not waiting is the point: a launcher spawns the daemon and leaves, and
+    // the outer test reaps the sleeper itself.
+    #[allow(clippy::zombie_processes)]
+    fn detach_launcher_half() {
+        if std::env::var_os(LAUNCHER_ENV).is_none() {
+            return;
+        }
+        let child = spawn_detached(&mut sleeper(), None).expect("spawn");
+        println!("spawned {}", child.id());
+    }
+
+    #[test]
+    fn a_detached_child_does_not_hold_the_callers_pipe() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let exe = std::env::current_exe().unwrap();
+        let started = Instant::now();
+        let mut launcher = Command::new(exe)
+            .args([
+                "--exact",
+                "setup::start::tests::detach_launcher_half",
+                "--nocapture",
+            ])
+            .env(LAUNCHER_ENV, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("run the launcher half");
+
+        // Read to end of file on a thread, so a regression shows up as a
+        // timeout here rather than a test that hangs for 30 seconds.
+        let mut out = launcher.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            let _ = std::io::Read::read_to_string(&mut out, &mut buf);
+            let _ = tx.send(buf);
+        });
+        let output = rx
+            .recv_timeout(Duration::from_secs(15))
+            .expect("the launcher's output never closed: its child inherited the pipe");
+        let _ = launcher.wait();
+
+        // Clean up the sleeper rather than leave it running for 30 seconds.
+        if let Some(pid) = output
+            .lines()
+            .find_map(|l| l.strip_prefix("spawned "))
+            .and_then(|p| p.trim().parse::<u32>().ok())
+        {
+            #[cfg(windows)]
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+            #[cfg(not(windows))]
+            let _ = Command::new("kill").arg(pid.to_string()).output();
+        } else {
+            panic!("the launcher half did not run: {output:?}");
+        }
+
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "reading the launcher's output took {:?}",
+            started.elapsed()
         );
     }
 }
