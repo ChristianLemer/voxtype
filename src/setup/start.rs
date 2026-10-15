@@ -197,9 +197,44 @@ fn spawn_detached(
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+        stop_passing_on_our_std_handles();
     }
 
     cmd.spawn()
+}
+
+/// Make this process's own standard handles non-inheritable.
+///
+/// Redirecting a child's stdio is not enough on Windows, and CI proved it:
+/// std creates every child with handle inheritance switched on, and the child
+/// then receives *every* inheritable handle its parent holds — not only the
+/// ones named as its stdio. The pipe an installer hands `voxtype restart` as
+/// stdout is inheritable, so the daemon picked it up anyway and the installer
+/// still waited for an end of file. Clearing the flag on our own handles
+/// stops that at the source.
+///
+/// Harmless for the launcher itself: it keeps using its handles, it only
+/// stops bequeathing them. Children that need a pipe — `output()` calls —
+/// get fresh ones that std makes inheritable on purpose.
+#[cfg(windows)]
+fn stop_passing_on_our_std_handles() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle has no preconditions; SetHandleInformation is
+        // given a handle this process owns, or skipped for none/invalid.
+        unsafe {
+            let handle = GetStdHandle(which);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 
 /// Linux starts voxtype through systemd, which already owns "start it, and do
