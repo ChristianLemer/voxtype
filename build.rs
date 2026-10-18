@@ -23,6 +23,10 @@ mod cli;
 use cli::Cli;
 
 fn main() -> Result<(), Error> {
+    // Stamped for every build, so it must stay out of the man-page thread
+    // and ahead of its early return.
+    expose_build_version();
+
     // Building the full clap command tree recurses deeply; Windows gives the
     // main thread 1 MB of stack and the release build overflowed it.
     std::thread::Builder::new()
@@ -91,6 +95,65 @@ fn generate_man_pages() -> Result<(), Error> {
     Ok(())
 }
 
+/// Make untagged builds distinguishable in `--version` output.
+///
+/// Cargo.toml is bumped to the release version before the tag exists, so
+/// every CI or local build between the bump and the tag self-reports as the
+/// release. On 2026-08-31 a stale binary honestly claiming "1.0.1" was
+/// missing a day of fixes, and nothing it printed could tell it apart from
+/// the real release build. Stamp the short commit hash into the version
+/// unless HEAD sits exactly on the matching release tag: `--version` prints
+/// `1.1.0` only for a build of tag v1.1.0 and `1.1.0+g<sha>` for everything
+/// else.
+///
+/// Builds without git (release tarballs — the AUR source package builds from
+/// one, so there is no .git dir) get no env var; `cli::VERSION` then falls
+/// back to the bare crate version. Git trouble must never fail the build and
+/// never leak a placeholder like "+gunknown" into the version string.
+fn expose_build_version() {
+    // Re-run when HEAD moves (commit, checkout). On a branch HEAD only holds
+    // `ref: refs/heads/<name>`, which a commit leaves unchanged, so also watch
+    // the branch ref and packed-refs (where `git gc` moves it). Creating a
+    // tag without a new commit does not retrigger by itself; release binaries
+    // are always clean `--no-cache` Docker builds, so that staleness is fine.
+    let mut watched = vec!["HEAD".to_string(), "packed-refs".to_string()];
+    if let Some(branch_ref) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        watched.push(branch_ref);
+    }
+    for name in &watched {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            if std::path::Path::new(&path).exists() {
+                println!("cargo:rerun-if-changed={path}");
+            }
+        }
+    }
+
+    let Some(sha) = git(&["rev-parse", "--short", "HEAD"]) else {
+        return;
+    };
+
+    let pkg = env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    let at_release_tag = git(&["tag", "--points-at", "HEAD"])
+        .is_some_and(|tags| tags.lines().any(|t| t == format!("v{pkg}")));
+
+    let version = if at_release_tag {
+        pkg
+    } else {
+        format!("{pkg}+g{sha}")
+    };
+    println!("cargo:rustc-env=VOXTYPE_BUILD_VERSION={version}");
+}
+
+/// Run git, returning trimmed stdout only on success with non-empty output.
+fn git(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
 /// Mirror ort-sys's build-time CUDA version selection so the binary's runtime
 /// probe can reject mismatched hosts before ort attempts (and crashes on)
 /// EP registration. ort 2.0.0-rc.12 picks cu12 vs cu13 prebuilt at compile time
@@ -98,6 +161,10 @@ fn generate_man_pages() -> Result<(), Error> {
 /// the parakeet code path uses to short-circuit graceful fallback.
 fn expose_cuda_build_major() {
     println!("cargo:rerun-if-env-changed=ORT_CUDA_VERSION");
+    // src/cpu.rs reads this via option_env! to pick the baseline SIGILL
+    // message; without the rerun hint an incremental build keeps the stale
+    // value when the env changes.
+    println!("cargo:rerun-if-env-changed=VOXTYPE_VARIANT");
     let major = match env::var("ORT_CUDA_VERSION").as_deref() {
         Ok("12") => "12",
         Ok("13") => "13",

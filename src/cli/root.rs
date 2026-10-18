@@ -12,7 +12,7 @@ use super::ENGINE_NAMES_CSV;
 
 #[derive(Parser)]
 #[command(name = "voxtype")]
-#[command(author, version, about = "Push-to-talk voice-to-text for Linux")]
+#[command(author, version = super::VERSION, about = "Push-to-talk voice-to-text for Linux")]
 #[command(long_about = "\
 Voxtype is a push-to-talk voice-to-text tool for Linux.\n\
 Optimized for Wayland, works on X11 too.")]
@@ -67,7 +67,11 @@ pub struct Cli {
         help_heading = "Transcription",
         long_help = "Override model for transcription.\n\
         Whisper: tiny, base, small, medium, large-v3, large-v3-turbo (and .en variants).\n\
-        Parakeet: parakeet-tdt-0.6b-v3, parakeet-tdt-0.6b-v3-int8"
+        Parakeet: parakeet-tdt-0.6b-v3, parakeet-tdt-0.6b-v3-int8.\n\
+        Other engines take the directory-form names from `voxtype info models`\n\
+        (e.g. moonshine-base, cohere-transcribe-q4f16). A model from another\n\
+        engine selects that engine; a Whisper name only sets [whisper] model.\n\
+        With `record start`, applies to that one recording on any engine."
     )]
     pub model: Option<String>,
 

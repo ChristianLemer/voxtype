@@ -288,6 +288,9 @@ pub enum EngineFamily {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Acceleration {
+    /// Runs on any x86-64-v2 CPU. The floor variant, for machines without
+    /// AVX2 where every other x86_64 binary SIGILLs (#612).
+    Baseline,
     Avx2,
     Avx512,
     Vulkan,
@@ -305,6 +308,8 @@ pub enum Acceleration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Variant {
+    /// Whisper built for x86-64-v2, no AVX2. See Dockerfile.baseline.
+    WhisperBaseline,
     WhisperAvx2,
     WhisperAvx512,
     WhisperVulkan,
@@ -337,10 +342,12 @@ impl Variant {
         Variant::OnnxCuda13,
         Variant::OnnxMigraphx,
         Variant::OnnxNative,
+        Variant::WhisperBaseline,
     ];
 
     pub const fn binary_name(self) -> &'static str {
         match self {
+            Variant::WhisperBaseline => "voxtype-baseline",
             Variant::WhisperAvx2 => "voxtype-avx2",
             Variant::WhisperAvx512 => "voxtype-avx512",
             Variant::WhisperVulkan => "voxtype-vulkan",
@@ -357,7 +364,8 @@ impl Variant {
 
     pub const fn family(self) -> EngineFamily {
         match self {
-            Variant::WhisperAvx2
+            Variant::WhisperBaseline
+            | Variant::WhisperAvx2
             | Variant::WhisperAvx512
             | Variant::WhisperVulkan
             | Variant::WhisperNative => EngineFamily::Whisper,
@@ -373,6 +381,7 @@ impl Variant {
 
     pub const fn acceleration(self) -> Acceleration {
         match self {
+            Variant::WhisperBaseline => Acceleration::Baseline,
             Variant::WhisperAvx2 | Variant::OnnxAvx2 => Acceleration::Avx2,
             Variant::WhisperAvx512 | Variant::OnnxAvx512 => Acceleration::Avx512,
             Variant::WhisperVulkan => Acceleration::Vulkan,
@@ -384,6 +393,7 @@ impl Variant {
 
     pub const fn display(self) -> &'static str {
         match self {
+            Variant::WhisperBaseline => "Whisper (baseline x86-64-v2)",
             Variant::WhisperAvx2 => "Whisper (AVX2)",
             Variant::WhisperAvx512 => "Whisper (AVX-512)",
             Variant::WhisperVulkan => "Whisper (Vulkan)",
@@ -423,6 +433,7 @@ impl Variant {
     /// names from before the ONNX rename.
     pub fn from_binary_name(name: &str) -> Option<Self> {
         match name {
+            "voxtype-baseline" => Some(Variant::WhisperBaseline),
             "voxtype-avx2" => Some(Variant::WhisperAvx2),
             "voxtype-avx512" => Some(Variant::WhisperAvx512),
             "voxtype-vulkan" => Some(Variant::WhisperVulkan),
@@ -785,8 +796,38 @@ pub fn enumerate_installed() -> Vec<Variant> {
         .collect()
 }
 
+/// Status of every packaged variant under `lib_dir`.
+///
+/// Independent of which binary is running. `setup onnx --enable` and friends
+/// rewrite the package's `/usr/bin/voxtype`, so what they can switch to is
+/// decided by the package layout, not by whether they were launched from it.
+/// Run through a `/usr/local/bin` wrapper around a manual install, the
+/// running binary sits outside `lib_dir`, `inventory()` reports a source
+/// install with no variants, and a switch that would work finds nothing.
+pub fn variant_statuses(
+    lib_dir: &Path,
+    cpu: &Cpu,
+    gpus: &Gpus,
+    active: Option<Variant>,
+) -> Vec<VariantStatus> {
+    Variant::ALL
+        .iter()
+        .map(|&v| VariantStatus {
+            variant: v,
+            binary_name: v.binary_name().to_string(),
+            installed: lib_dir.join(v.binary_name()).exists(),
+            runs_on_this_cpu: variant_runs_on_cpu(v, cpu),
+            gpu_available: variant_gpu_available(v, gpus),
+            active: active == Some(v),
+        })
+        .collect()
+}
+
 fn variant_runs_on_cpu(v: Variant, cpu: &Cpu) -> bool {
     match v.acceleration() {
+        // The floor variant: it exists precisely so there is something to run
+        // when nothing else will, so it never disqualifies itself.
+        Acceleration::Baseline => true,
         Acceleration::Avx512 => cpu.avx512,
         // ONNX GPU binaries bundle an ONNX Runtime built with AVX-512.
         // Runtime CPU dispatch in ORT mostly handles fallback, but the
@@ -886,17 +927,7 @@ pub fn inventory() -> Inventory {
     let running = daemon_pid.and_then(running_variant);
 
     let variants = if install_kind == InstallKind::Package {
-        Variant::ALL
-            .iter()
-            .map(|&v| VariantStatus {
-                variant: v,
-                binary_name: v.binary_name().to_string(),
-                installed: Path::new(LIB_DIR).join(v.binary_name()).exists(),
-                runs_on_this_cpu: variant_runs_on_cpu(v, &cpu),
-                gpu_available: variant_gpu_available(v, &gpus),
-                active: active == Some(v),
-            })
-            .collect()
+        variant_statuses(Path::new(LIB_DIR), &cpu, &gpus, active)
     } else {
         Vec::new()
     };
@@ -1003,7 +1034,7 @@ mod tests {
             .iter()
             .filter(|v| v.family() == EngineFamily::Onnx)
             .count();
-        assert_eq!(whisper, 4);
+        assert_eq!(whisper, 5);
         assert_eq!(onnx, 7);
         assert_eq!(whisper + onnx, Variant::ALL.len());
     }
@@ -1015,6 +1046,14 @@ mod tests {
             avx512: false,
         };
         assert!(variant_runs_on_cpu(Variant::WhisperAvx2, &no_avx512));
+        // The floor variant exists to run when nothing else will, so it must
+        // never gate itself out (#612).
+        let pre_haswell = Cpu {
+            avx2: false,
+            avx512: false,
+        };
+        assert!(variant_runs_on_cpu(Variant::WhisperBaseline, &pre_haswell));
+        assert!(!variant_runs_on_cpu(Variant::WhisperAvx2, &pre_haswell));
         assert!(!variant_runs_on_cpu(Variant::WhisperAvx512, &no_avx512));
         assert!(!variant_runs_on_cpu(Variant::OnnxCuda, &no_avx512));
         assert!(variant_runs_on_cpu(Variant::WhisperVulkan, &no_avx512));

@@ -29,6 +29,7 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use voxtype::audio::levels::{AudioFrame, FRAME_HZ};
 use voxtype::config::Config as VoxtypeConfig;
 use voxtype::osd::config::{OsdConfig, OsdPosition};
+use voxtype::osd::gtk_env;
 use voxtype::osd::ipc::{resolve_socket_path, run_ipc_loop, FrameRing};
 use voxtype::osd::theme::ThemeWatcher;
 use voxtype::osd::visual::{peak_meter_fraction, project_envelope, MeterZone, Palette, PeakHold};
@@ -167,12 +168,46 @@ impl SharedState {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Keep GDK off dmabuf rendering. The OSD is a small overlay;
+    // shared-memory buffers cost nothing here. Respect an explicit
+    // GDK_DISABLE from the user (they may be working around something else,
+    // or testing the dmabuf path deliberately).
+    if std::env::var_os("GDK_DISABLE").is_none() {
+        std::env::set_var("GDK_DISABLE", "dmabuf");
+    }
+
+    // GDK_DISABLE=dmabuf does not stop GDK binding zwp_linux_dmabuf_v1 and
+    // handling its feedback, which is where unfixed GTK releases munmap the
+    // wrong pointer on output hotplug (gtk#8366; #580, #656). Only
+    // GDK_WAYLAND_DISABLE keeps the interface unbound. Must run before GDK
+    // opens the display.
+    let (major, minor, micro) = (
+        gtk4::major_version(),
+        gtk4::minor_version(),
+        gtk4::micro_version(),
+    );
+    let skip_dmabuf = gtk_env::gtk_lacks_dmabuf_feedback_fix(major, minor, micro);
+    if skip_dmabuf {
+        let existing = std::env::var("GDK_WAYLAND_DISABLE").ok();
+        std::env::set_var(
+            "GDK_WAYLAND_DISABLE",
+            gtk_env::wayland_disable_with(existing.as_deref(), gtk_env::LINUX_DMABUF_INTERFACE),
+        );
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    if skip_dmabuf {
+        tracing::info!(
+            "GTK {major}.{minor}.{micro} predates the gtk#8366 fix; not binding {}",
+            gtk_env::LINUX_DMABUF_INTERFACE
+        );
+    }
 
     let args = Args::parse();
     let socket_path = resolve_socket_path(args.socket.clone());
@@ -547,21 +582,42 @@ fn draw(
     let gap = (w * 0.01).max(2.0);
     let wave_width = (w - meter_width - gap).max(0.0);
 
-    draw_waveform(cr, 0.0, 0.0, wave_width, h, palette, state, gain);
-    draw_peak_meter(cr, wave_width + gap, 0.0, meter_width, h, palette, state);
+    draw_waveform(
+        cr,
+        &Rect {
+            x: 0.0,
+            y: 0.0,
+            w: wave_width,
+            h,
+        },
+        palette,
+        state,
+        gain,
+    );
+    draw_peak_meter(
+        cr,
+        &Rect {
+            x: wave_width + gap,
+            y: 0.0,
+            w: meter_width,
+            h,
+        },
+        palette,
+        state,
+    );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_waveform(
-    cr: &Context,
+/// Pixel-space rectangle for the draw helpers, so geometry travels as one
+/// argument instead of four loose floats.
+struct Rect {
     x: f64,
     y: f64,
     w: f64,
     h: f64,
-    palette: &Palette,
-    state: &Arc<SharedState>,
-    gain: f64,
-) {
+}
+
+fn draw_waveform(cr: &Context, r: &Rect, palette: &Palette, state: &Arc<SharedState>, gain: f64) {
+    let Rect { x, y, w, h } = *r;
     if w < 1.0 {
         return;
     }
@@ -632,15 +688,8 @@ fn sample_to_pixels(sample: f32, half_height: f64, gain: f64) -> f64 {
     (sample as f64 * gain).clamp(-1.0, 1.0) * half_height
 }
 
-fn draw_peak_meter(
-    cr: &Context,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    palette: &Palette,
-    state: &Arc<SharedState>,
-) {
+fn draw_peak_meter(cr: &Context, r: &Rect, palette: &Palette, state: &Arc<SharedState>) {
+    let Rect { x, y, w, h } = *r;
     if w < 1.0 || h < 1.0 {
         return;
     }

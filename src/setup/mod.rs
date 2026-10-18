@@ -78,6 +78,7 @@ pub struct OutputChainStatus {
     pub display_server: DisplayServer,
     pub wtype: OutputToolStatus,
     pub eitype: OutputToolStatus,
+    pub dotool: OutputToolStatus,
     pub ydotool: OutputToolStatus,
     pub ydotool_daemon: bool,
     pub wl_copy: OutputToolStatus,
@@ -230,6 +231,11 @@ pub async fn detect_output_chain() -> OutputChainStatus {
         None
     };
 
+    // Check dotool. Same test the dotool driver applies at output time: on
+    // PATH is enough, since it writes to uinput on Wayland, X11 and TTY alike.
+    let dotool_path = get_command_path("dotool").await;
+    let dotool_installed = dotool_path.is_some();
+
     // Check ydotool
     let ydotool_path = get_command_path("ydotool").await;
     let ydotool_installed = ydotool_path.is_some();
@@ -294,6 +300,8 @@ pub async fn detect_output_chain() -> OutputChainStatus {
         Some("wtype".to_string())
     } else if eitype_available {
         Some("eitype".to_string())
+    } else if dotool_installed {
+        Some("dotool".to_string())
     } else if ydotool_available {
         Some("ydotool".to_string())
     } else if pbcopy_available {
@@ -319,6 +327,13 @@ pub async fn detect_output_chain() -> OutputChainStatus {
             available: eitype_available,
             path: eitype_path,
             note: eitype_note,
+        },
+        dotool: OutputToolStatus {
+            name: "dotool",
+            installed: dotool_installed,
+            available: dotool_installed,
+            path: dotool_path,
+            note: None,
         },
         ydotool: OutputToolStatus {
             name: "ydotool",
@@ -360,6 +375,57 @@ pub async fn detect_output_chain() -> OutputChainStatus {
     }
 }
 
+/// The output method the daemon will actually use for this config.
+///
+/// `detect_output_chain` only knows what is installed, and its
+/// `primary_method` follows the default driver order. A configured `mode`
+/// other than `type`, or a custom `driver_order`, changes what the daemon
+/// really does, and the status report must say that instead.
+pub fn configured_primary_method(
+    status: &OutputChainStatus,
+    output: &crate::config::OutputConfig,
+) -> Option<String> {
+    use crate::config::{OutputDriver, OutputMode};
+
+    let clipboard = status.wl_copy.available || status.xclip.available || status.pbcopy.available;
+    match output.mode {
+        OutputMode::File => return Some("file".to_string()),
+        OutputMode::Clipboard => return clipboard.then(|| "clipboard".to_string()),
+        OutputMode::Paste => {
+            let keystroke =
+                status.wtype.available || status.eitype.available || status.ydotool.available;
+            return (clipboard && keystroke).then(|| "paste".to_string());
+        }
+        OutputMode::Type => {}
+    }
+
+    let Some(order) = output.driver_order.as_deref() else {
+        return status.primary_method.clone();
+    };
+    if status.display_server == DisplayServer::MacOS {
+        // driver_order is not applied on macOS; the native chain is.
+        return status.primary_method.clone();
+    }
+    for driver in order {
+        let available = match driver {
+            OutputDriver::Wtype => status.wtype.available,
+            OutputDriver::Eitype => status.eitype.available,
+            OutputDriver::Dotool => status.dotool.available,
+            OutputDriver::Ydotool => status.ydotool.available,
+            OutputDriver::Clipboard => status.wl_copy.available,
+            OutputDriver::Xclip => status.xclip.available,
+        };
+        if available {
+            return Some(match driver {
+                OutputDriver::Clipboard | OutputDriver::Xclip => "clipboard".to_string(),
+                other => other.to_string(),
+            });
+        }
+    }
+    // The daemon appends clipboard to a custom order when this is on.
+    (output.fallback_to_clipboard && clipboard).then(|| "clipboard".to_string())
+}
+
 /// Print output chain status
 pub fn print_output_chain_status(status: &OutputChainStatus) {
     println!("\nOutput Chain:");
@@ -397,6 +463,9 @@ pub fn print_output_chain_status(status: &OutputChainStatus) {
             &status.eitype,
             status.display_server == DisplayServer::Wayland,
         );
+
+        // dotool
+        print_tool_status(&status.dotool, true);
 
         // ydotool
         if status.ydotool.installed {
@@ -442,17 +511,24 @@ pub fn print_output_chain_status(status: &OutputChainStatus) {
             "pbcopy" => "pbcopy (clipboard, requires manual paste)",
             "wtype" => "wtype (CJK supported)",
             "eitype" => "eitype (libei, GNOME/KDE native)",
+            "dotool" => "dotool (keyboard layouts via dotool_xkb_layout)",
             "ydotool" => "ydotool (CJK not supported)",
             "clipboard" => "clipboard (requires manual paste)",
             _ => method.as_str(),
         };
-        println!("  \x1b[32m→\x1b[0m Text will be typed via {}", method_desc);
+        match method.as_str() {
+            "file" => println!("  \x1b[32m→\x1b[0m Text will be written to a file (mode = \"file\")"),
+            "paste" => println!(
+                "  \x1b[32m→\x1b[0m Text will be pasted: clipboard, then a paste keystroke (mode = \"paste\")"
+            ),
+            _ => println!("  \x1b[32m→\x1b[0m Text will be typed via {}", method_desc),
+        }
     } else {
         println!("  \x1b[31m→\x1b[0m No text output method available!");
         if status.display_server == DisplayServer::MacOS {
             println!("    osascript should be available on macOS");
         } else {
-            println!("    Install wtype (Wayland), eitype (GNOME/KDE), or ydotool (X11) for typing support");
+            println!("    Install wtype (Wayland), eitype (GNOME/KDE), dotool, or ydotool for typing support");
         }
     }
 }
@@ -512,6 +588,11 @@ pub(crate) enum ModelKind {
     Whisper,
     Parakeet,
     SenseVoice,
+    Moonshine,
+    Paraformer,
+    Dolphin,
+    Omnilingual,
+    Cohere,
     OpenVino,
 }
 
@@ -522,9 +603,10 @@ pub(crate) enum ModelKind {
 /// SenseVoice existed, so resolving it to SenseVoice made
 /// `setup --download --model small` unable to fetch Whisper small at all: it
 /// failed the `sensevoice` feature gate on Whisper builds, and on ONNX builds
-/// it would have downloaded a different engine's model. SenseVoice's
-/// colliding names stay reachable under their directory form
-/// (`sensevoice-small`, `sensevoice-small-fp32`).
+/// it would have downloaded a different engine's model. The same holds for
+/// Moonshine's `base`/`tiny` and Dolphin's `base`. Every colliding name stays
+/// reachable under its directory form (`sensevoice-small`, `moonshine-base`,
+/// `dolphin-base`), which is what `model_catalog::download_arg` advertises.
 pub(crate) fn classify_model_override(name: &str) -> anyhow::Result<ModelKind> {
     if model::is_valid_model(name) {
         Ok(ModelKind::Whisper)
@@ -532,17 +614,115 @@ pub(crate) fn classify_model_override(name: &str) -> anyhow::Result<ModelKind> {
         Ok(ModelKind::Parakeet)
     } else if model::is_sensevoice_model(name) {
         Ok(ModelKind::SenseVoice)
+    } else if model::is_moonshine_model(name) {
+        Ok(ModelKind::Moonshine)
+    } else if model::is_paraformer_model(name) {
+        Ok(ModelKind::Paraformer)
+    } else if model::is_dolphin_model(name) {
+        Ok(ModelKind::Dolphin)
+    } else if model::is_omnilingual_model(name) {
+        Ok(ModelKind::Omnilingual)
+    } else if model::is_cohere_model(name) {
+        Ok(ModelKind::Cohere)
     } else if model::is_openvino_model(name) {
         Ok(ModelKind::OpenVino)
     } else {
         anyhow::bail!(
-            "Unknown model '{}'.\n  Whisper: {}\n  Parakeet: {}\n  SenseVoice: {}\n  OpenVINO: {}",
+            "Unknown model '{}'.\n  Whisper: {}\n  Parakeet: {}\n  SenseVoice: {}\n  \
+             Moonshine: {}\n  Paraformer: {}\n  Dolphin: {}\n  Omnilingual: {}\n  \
+             Cohere: {}\n  OpenVINO: {}",
             name,
             model::valid_model_names().join(", "),
             model::valid_parakeet_model_names().join(", "),
             model::sensevoice_setup_model_names().join(", "),
+            model::moonshine_setup_model_names().join(", "),
+            model::paraformer_setup_model_names().join(", "),
+            model::dolphin_setup_model_names().join(", "),
+            model::omnilingual_setup_model_names().join(", "),
+            model::cohere_setup_model_names().join(", "),
             model::valid_openvino_model_names().join(", "),
         )
+    }
+}
+
+/// How `run_setup` reaches an ONNX engine whose download path was built for
+/// the interactive picker (#687): the same registry lookup, R2 download, and
+/// post-download validator, addressed by function pointer so one branch
+/// serves every such engine.
+struct OnnxSetupRoute {
+    /// Name shown in status lines.
+    display: &'static str,
+    /// Engine name written to the config on --activate.
+    engine: &'static str,
+    /// Cargo feature that compiles the engine's transcriber.
+    feature: &'static str,
+    /// Whether this binary can run the engine. The registry and downloader
+    /// are compiled unconditionally, but fetching a model the binary can't
+    /// load helps nobody, so the gate matches the older per-engine branches.
+    enabled: bool,
+    /// On-disk directory under the models dir.
+    dir_name: fn(&str) -> Option<&'static str>,
+    /// Config value --activate writes. Moonshine keeps its short name (the
+    /// `[moonshine]` default and what the picker writes); the others use the
+    /// directory name, matching their config defaults.
+    config_value: fn(&str) -> Option<&'static str>,
+    validate: fn(&std::path::Path) -> anyhow::Result<()>,
+    download: fn(&str) -> anyhow::Result<()>,
+}
+
+fn onnx_setup_route(kind: ModelKind) -> Option<OnnxSetupRoute> {
+    match kind {
+        ModelKind::Moonshine => Some(OnnxSetupRoute {
+            display: "Moonshine",
+            engine: "moonshine",
+            feature: "moonshine",
+            enabled: cfg!(feature = "moonshine"),
+            dir_name: model::moonshine_dir_name,
+            config_value: model::moonshine_config_name,
+            validate: model::validate_moonshine_model,
+            download: model::download_moonshine_model,
+        }),
+        ModelKind::Paraformer => Some(OnnxSetupRoute {
+            display: "Paraformer",
+            engine: "paraformer",
+            feature: "paraformer",
+            enabled: cfg!(feature = "paraformer"),
+            dir_name: model::paraformer_dir_name,
+            config_value: model::paraformer_dir_name,
+            validate: model::validate_onnx_ctc_model,
+            download: model::download_paraformer_model,
+        }),
+        ModelKind::Dolphin => Some(OnnxSetupRoute {
+            display: "Dolphin",
+            engine: "dolphin",
+            feature: "dolphin",
+            enabled: cfg!(feature = "dolphin"),
+            dir_name: model::dolphin_dir_name,
+            config_value: model::dolphin_dir_name,
+            validate: model::validate_onnx_ctc_model,
+            download: model::download_dolphin_model,
+        }),
+        ModelKind::Omnilingual => Some(OnnxSetupRoute {
+            display: "Omnilingual",
+            engine: "omnilingual",
+            feature: "omnilingual",
+            enabled: cfg!(feature = "omnilingual"),
+            dir_name: model::omnilingual_dir_name,
+            config_value: model::omnilingual_dir_name,
+            validate: model::validate_onnx_ctc_model,
+            download: model::download_omnilingual_model,
+        }),
+        ModelKind::Cohere => Some(OnnxSetupRoute {
+            display: "Cohere Transcribe",
+            engine: "cohere",
+            feature: "cohere",
+            enabled: cfg!(feature = "cohere"),
+            dir_name: model::cohere_dir_name,
+            config_value: model::cohere_dir_name,
+            validate: model::validate_cohere_model,
+            download: model::download_cohere_model,
+        }),
+        _ => None,
     }
 }
 
@@ -618,7 +798,74 @@ pub async fn run_setup(
     let is_sensevoice = kind == Some(ModelKind::SenseVoice);
     let is_openvino = kind == Some(ModelKind::OpenVino);
 
-    if is_openvino {
+    if let Some(route) = kind.and_then(onnx_setup_route) {
+        // Engines whose downloads were picker-only until #687: routed
+        // through the same registry + R2 + validator path the picker uses.
+        let model_name = model_override.unwrap(); // Safe: a route implies Some
+
+        if !quiet {
+            println!("\n{} model...", route.display);
+        }
+
+        if !route.enabled {
+            print_failure(&format!(
+                "{} model '{}' requires the '{}' feature",
+                route.display, model_name, route.feature
+            ));
+            println!(
+                "       Rebuild with: cargo build --features {}",
+                route.feature
+            );
+            anyhow::bail!("{} feature not enabled", route.feature);
+        }
+
+        let dir_name = (route.dir_name)(model_name).unwrap(); // Safe: classifier matched
+        let model_path = models_dir.join(dir_name);
+        let model_valid = model_path.exists() && (route.validate)(&model_path).is_ok();
+
+        // Downloading is not selecting (#610): the config is only touched
+        // behind --activate, exactly like the branches below.
+        let apply_activation = || -> anyhow::Result<()> {
+            let value = (route.config_value)(model_name).unwrap();
+            model::set_engine_model_config(route.engine, value)?;
+            if !quiet {
+                print_success(&format!(
+                    "Config updated: engine = \"{}\", model = \"{}\"",
+                    route.engine, value
+                ));
+            }
+            Ok(())
+        };
+
+        if model_valid {
+            if !quiet {
+                let size = std::fs::read_dir(&model_path)
+                    .map(|entries| {
+                        entries
+                            .flatten()
+                            .filter_map(|e| e.metadata().ok())
+                            .map(|m| m.len() as f64 / 1024.0 / 1024.0)
+                            .sum::<f64>()
+                    })
+                    .unwrap_or(0.0);
+                print_success(&format!("Model ready: {} ({:.0} MB)", model_name, size));
+            }
+            if activate {
+                apply_activation()?;
+            }
+        } else if download {
+            (route.download)(model_name)?;
+            if activate {
+                apply_activation()?;
+            }
+        } else if !quiet {
+            print_info(&format!("Model '{}' not downloaded yet", model_name));
+            println!(
+                "       Run: voxtype setup --download --model {}",
+                model_name
+            );
+        }
+    } else if is_openvino {
         // Handle OpenVINO model
         #[allow(unused_variables)]
         let model_name = model_override.unwrap(); // Safe: is_openvino implies Some
@@ -1006,7 +1253,8 @@ pub async fn run_checks(config: &Config) -> anyhow::Result<()> {
         }
 
         // Check output chain
-        let output_status = detect_output_chain().await;
+        let mut output_status = detect_output_chain().await;
+        output_status.primary_method = configured_primary_method(&output_status, &config.output);
         print_output_chain_status(&output_status);
 
         if output_status.primary_method.is_none() {
@@ -1018,7 +1266,9 @@ pub async fn run_checks(config: &Config) -> anyhow::Result<()> {
                 println!("       Install ydotool: sudo pacman -S ydotool");
             }
             all_ok = false;
-        } else if output_status.primary_method.as_deref() == Some("clipboard") {
+        } else if output_status.primary_method.as_deref() == Some("clipboard")
+            && config.output.mode == crate::config::OutputMode::Type
+        {
             print_warning("Only clipboard mode available - typing won't work");
             if output_status.display_server == DisplayServer::Wayland {
                 println!("       Install wtype: sudo pacman -S wtype");
@@ -1216,6 +1466,89 @@ pub async fn run_checks(config: &Config) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{OutputConfig, OutputDriver, OutputMode};
+
+    fn tool(name: &'static str, available: bool) -> OutputToolStatus {
+        OutputToolStatus {
+            name,
+            installed: available,
+            available,
+            path: None,
+            note: None,
+        }
+    }
+
+    /// A Wayland box without eitype: what `detect_output_chain` reports here.
+    fn wayland_status(wtype: bool) -> OutputChainStatus {
+        OutputChainStatus {
+            display_server: DisplayServer::Wayland,
+            wtype: tool("wtype", wtype),
+            eitype: tool("eitype", false),
+            dotool: tool("dotool", true),
+            ydotool: tool("ydotool", false),
+            ydotool_daemon: false,
+            wl_copy: tool("wl-copy", true),
+            xclip: tool("xclip", false),
+            osascript: tool("osascript", false),
+            pbcopy: tool("pbcopy", false),
+            primary_method: Some(if wtype { "wtype" } else { "dotool" }.to_string()),
+        }
+    }
+
+    fn output(mode: OutputMode, order: Option<Vec<OutputDriver>>) -> OutputConfig {
+        OutputConfig {
+            mode,
+            driver_order: order,
+            ..OutputConfig::default()
+        }
+    }
+
+    #[test]
+    fn primary_method_follows_a_custom_driver_order() {
+        // driver_order = ["wtype", "clipboard"] never uses dotool, even when
+        // wtype is unavailable and dotool is installed.
+        let cfg = output(
+            OutputMode::Type,
+            Some(vec![OutputDriver::Wtype, OutputDriver::Clipboard]),
+        );
+        assert_eq!(
+            configured_primary_method(&wayland_status(true), &cfg).as_deref(),
+            Some("wtype")
+        );
+        assert_eq!(
+            configured_primary_method(&wayland_status(false), &cfg).as_deref(),
+            Some("clipboard")
+        );
+    }
+
+    #[test]
+    fn primary_method_without_a_custom_order_keeps_detection() {
+        let cfg = output(OutputMode::Type, None);
+        assert_eq!(
+            configured_primary_method(&wayland_status(false), &cfg).as_deref(),
+            Some("dotool")
+        );
+    }
+
+    #[test]
+    fn primary_method_reports_the_configured_mode() {
+        let status = wayland_status(true);
+        let method = |mode| configured_primary_method(&status, &output(mode, None));
+        assert_eq!(method(OutputMode::File).as_deref(), Some("file"));
+        assert_eq!(method(OutputMode::Clipboard).as_deref(), Some("clipboard"));
+        assert_eq!(method(OutputMode::Paste).as_deref(), Some("paste"));
+    }
+
+    #[test]
+    fn exhausted_driver_order_uses_clipboard_only_when_fallback_is_on() {
+        let mut cfg = output(OutputMode::Type, Some(vec![OutputDriver::Ydotool]));
+        assert_eq!(
+            configured_primary_method(&wayland_status(true), &cfg).as_deref(),
+            Some("clipboard")
+        );
+        cfg.fallback_to_clipboard = false;
+        assert_eq!(configured_primary_method(&wayland_status(true), &cfg), None);
+    }
 
     /// `small` is in both the Whisper and SenseVoice tables. Whisper has to
     /// win, or `setup --download --model small` can never fetch Whisper small.
@@ -1230,6 +1563,62 @@ mod tests {
             classify_model_override("small.en").unwrap(),
             ModelKind::Whisper
         );
+        // Moonshine and Dolphin also use `base` as a short name.
+        assert!(model::is_moonshine_model("base"));
+        assert!(model::is_dolphin_model("base"));
+        assert_eq!(classify_model_override("base").unwrap(), ModelKind::Whisper);
+        assert_eq!(classify_model_override("tiny").unwrap(), ModelKind::Whisper);
+    }
+
+    /// The picker-only engines (#687) are reachable by their directory-form
+    /// names, which is what `download_arg` advertises.
+    #[test]
+    fn picker_only_engines_classify_by_directory_name() {
+        for (name, expected) in [
+            ("moonshine-base", ModelKind::Moonshine),
+            ("moonshine-tiny-ko", ModelKind::Moonshine),
+            ("paraformer-zh", ModelKind::Paraformer),
+            ("dolphin-base", ModelKind::Dolphin),
+            ("omnilingual-300m", ModelKind::Omnilingual),
+            ("cohere-transcribe-q4f16", ModelKind::Cohere),
+            ("cohere-transcribe-fp16", ModelKind::Cohere),
+        ] {
+            assert_eq!(classify_model_override(name).unwrap(), expected, "{}", name);
+        }
+    }
+
+    /// `run_setup` unwraps a route's `dir_name` and `config_value` for any
+    /// name the classifier accepted, so every advertised argument must
+    /// resolve through its route without panicking.
+    #[test]
+    fn every_routed_engine_resolves_names_for_its_catalog() {
+        for engine in [
+            "moonshine",
+            "paraformer",
+            "dolphin",
+            "omnilingual",
+            "cohere",
+        ] {
+            for model in crate::model_catalog::model_catalog(engine) {
+                let arg = crate::model_catalog::download_arg(engine, model).unwrap();
+                let kind = classify_model_override(&arg).unwrap();
+                let route = onnx_setup_route(kind)
+                    .unwrap_or_else(|| panic!("no setup route for {} '{}'", engine, arg));
+                assert_eq!(route.engine, engine, "{}", arg);
+                assert!(
+                    (route.dir_name)(&arg).is_some(),
+                    "{} '{}' has no directory name",
+                    engine,
+                    arg
+                );
+                assert!(
+                    (route.config_value)(&arg).is_some(),
+                    "{} '{}' has no config value",
+                    engine,
+                    arg
+                );
+            }
+        }
     }
 
     #[test]
@@ -1282,6 +1671,11 @@ mod tests {
                     "whisper" => ModelKind::Whisper,
                     "parakeet" => ModelKind::Parakeet,
                     "sensevoice" => ModelKind::SenseVoice,
+                    "moonshine" => ModelKind::Moonshine,
+                    "paraformer" => ModelKind::Paraformer,
+                    "dolphin" => ModelKind::Dolphin,
+                    "omnilingual" => ModelKind::Omnilingual,
+                    "cohere" => ModelKind::Cohere,
                     "openvino" => ModelKind::OpenVino,
                     other => panic!(
                         "'{}' advertises a download argument but run_setup has no branch for it",

@@ -1,4 +1,4 @@
-use super::parse::parse_config_with_defaults;
+use super::parse::parse_config_salvaging;
 use super::{
     Config, LanguageConfig, OpenVinoConfig, OutputMode, SonioxConfig, TranscriptionEngine,
 };
@@ -9,6 +9,22 @@ use std::path::{Path, PathBuf};
 /// Only "1" and "true" (case-insensitive) are truthy; everything else is falsy.
 fn parse_bool_env(val: &str) -> bool {
     val == "1" || val.eq_ignore_ascii_case("true")
+}
+
+/// Top-level tables that voxtype only reads nested elsewhere, as
+/// `(name, where it belongs)`. Serde ignores them silently, which is how a
+/// `[post_process]` meant for `[output.post_process]` never ran.
+fn misplaced_sections(contents: &str) -> Vec<(String, String)> {
+    let Ok(table) = contents.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    table
+        .iter()
+        .filter(|(_, value)| value.is_table())
+        .filter_map(|(name, _)| {
+            super::schema::misplaced_section_home(name).map(|home| (name.clone(), home))
+        })
+        .collect()
 }
 
 pub fn load_config(path: Option<&Path>) -> Result<Config, VoxtypeError> {
@@ -34,8 +50,38 @@ pub fn load_config(path: Option<&Path>) -> Result<Config, VoxtypeError> {
             let contents = std::fs::read_to_string(path)
                 .map_err(|e| VoxtypeError::Config(format!("Failed to read config: {}", e)))?;
 
-            config = parse_config_with_defaults(&contents)
+            // Salvage per section rather than refusing to start: one bad
+            // value used to cost the user every other setting they had
+            // (#646). A TOML syntax error is still fatal, because there is
+            // nothing to salvage from a file we cannot parse at all.
+            let (parsed, rejected) = parse_config_salvaging(&contents)
                 .map_err(|e| VoxtypeError::Config(format!("Invalid config: {}", e)))?;
+            config = parsed;
+
+            for key in &rejected {
+                // Names only. These sections hold API keys for the remote and
+                // Soniox backends, so the values must never reach the log.
+                tracing::warn!(
+                    "Config section '{}' could not be read and is using defaults. \
+                     Check it against `voxtype config schema`.",
+                    key
+                );
+            }
+            if !rejected.is_empty() {
+                tracing::warn!(
+                    "{} config section(s) were skipped: {}",
+                    rejected.len(),
+                    rejected.join(", ")
+                );
+            }
+            for (name, home) in misplaced_sections(&contents) {
+                tracing::warn!(
+                    "Config section [{}] is ignored at the top level. \
+                     Voxtype reads it as {}; move it there.",
+                    name,
+                    home
+                );
+            }
         } else {
             tracing::debug!("Config file not found at {:?}, using defaults", path);
         }
@@ -238,6 +284,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn top_level_post_process_is_flagged_with_its_real_home() {
+        let config = "[output]\nmode = \"type\"\n\n[post_process]\ncommand = \"sed 's/uh, //g'\"\n";
+        assert_eq!(
+            misplaced_sections(config),
+            vec![(
+                "post_process".to_string(),
+                "[output.post_process]".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn real_and_unknown_sections_are_not_flagged() {
+        // [audio] is a real top-level section even though [meeting.audio]
+        // also exists; an unknown section stays silently ignored as before.
+        let config = "[audio]\ndevice = \"default\"\n\n[output.post_process]\ncommand = \"cat\"\n\n[meeting.audio]\nloopback_device = \"auto\"\n\n[some_removed_section]\nx = 1\n";
+        assert!(misplaced_sections(config).is_empty());
+    }
+
+    #[test]
+    fn misplaced_nested_sections_name_their_parent() {
+        assert_eq!(
+            super::super::schema::misplaced_section_home("notification").as_deref(),
+            Some("[output.notification]")
+        );
+        assert_eq!(
+            super::super::schema::misplaced_section_home("whisper"),
+            None
+        );
+    }
+
+    #[test]
     fn test_load_config_explicit_path() {
         // Explicit --config should always be used regardless of fallback.
         let dir = tempfile::tempdir().unwrap();
@@ -267,5 +345,35 @@ mod tests {
         assert_eq!(config.hotkey.key, "F12");
         assert_eq!(config.whisper.model, "tiny.en");
         assert_eq!(config.output.mode, OutputMode::Clipboard);
+    }
+
+    /// #646's user-facing contract: a config file with one broken section
+    /// still loads. Before the salvage path, `load_config` returned Err here
+    /// and the daemon refused to start, costing the user every setting they
+    /// had over one bad value.
+    #[test]
+    fn load_config_warns_but_succeeds_on_a_partially_bad_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+                [hotkey]
+                key = "F13"
+
+                [audio]
+                max_duration_secs = "not a number"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config(Some(&config_path))
+            .expect("a partially bad config must load, not refuse to start (#646)");
+        assert_eq!(config.hotkey.key, "F13", "the good section must survive");
+        assert_eq!(
+            config.audio.max_duration_secs,
+            Config::default().audio.max_duration_secs,
+            "the bad section falls back to its default"
+        );
     }
 }

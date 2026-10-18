@@ -13,11 +13,14 @@
 //! - [`config`] — `[osd]` config block (`OsdConfig`).
 //! - [`theme`] — Omarchy theme parsing + change watcher.
 //! - `desktop` — the recording card for Windows and macOS (`voxtype osd-card`).
+//! - [`gtk_env`] — environment workarounds for GTK4 bugs (GTK frontend only).
 
 pub mod config;
 #[cfg(any(windows, target_os = "macos"))]
 pub mod desktop;
+pub mod gtk_env;
 pub mod ipc;
+pub mod recipe;
 pub mod style;
 pub mod supervisor;
 pub mod theme;
