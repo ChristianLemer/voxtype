@@ -665,6 +665,10 @@ pub fn check_vulkan_runtime() -> bool {
     // runtime not found" on machines where Vulkan worked perfectly well
     // (#430). Guix, and anyone using a non-standard prefix or
     // LD_LIBRARY_PATH, had the same problem.
+    // Unix only: `dlopen` and the paths below are both Linux shapes, and
+    // this fork also builds for Windows, where neither exists. Upstream
+    // never hit it because it does not build there.
+    #[cfg(unix)]
     unsafe {
         let name = c"libvulkan.so.1";
         let handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY);
@@ -1482,6 +1486,7 @@ mod tests {
     /// This machine has Vulkan, so the probe must find it; the value of the
     /// test is that it fails loudly if the probe regresses to path guessing
     /// on a system where the paths happen to be absent.
+    #[cfg(unix)]
     #[test]
     fn vulkan_detection_matches_the_loader() {
         let via_loader = unsafe {
