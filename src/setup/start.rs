@@ -93,9 +93,31 @@ pub fn start() -> Result<Started, StartError> {
 }
 
 /// Launch the app, which starts the daemon and the icon together.
+/// The app bundle this binary is running from, or the installed one.
+///
+/// `app_bundle_path()` answers "/Applications/Voxtype.app", which is where
+/// `setup app-bundle` *installs* to — not necessarily where the running copy
+/// lives. A deployment that puts the app in `~/Applications`, as a fleet tool
+/// without administrator rights does, then found nothing and reported voxtype
+/// absent right after installing it. Deriving the bundle from our own path
+/// works wherever it was put; the installed location stays as a fallback for
+/// a bare binary outside any bundle.
+#[cfg(target_os = "macos")]
+fn containing_bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    // <bundle>/Contents/MacOS/voxtype-bin
+    let bundle = exe.parent()?.parent()?.parent()?;
+    let looks_like_a_bundle = bundle.extension().is_some_and(|e| e == "app")
+        && bundle.join("Contents/Info.plist").is_file();
+    looks_like_a_bundle.then(|| bundle.to_path_buf())
+}
+
 #[cfg(target_os = "macos")]
 fn launch() -> Result<PathBuf, StartError> {
-    let bundle = crate::setup::app_bundle::app_bundle_path();
+    let bundle = match containing_bundle() {
+        Some(here) => here,
+        None => crate::setup::app_bundle::app_bundle_path(),
+    };
     if !bundle.exists() {
         return Err(StartError::NoBundle);
     }
@@ -360,6 +382,41 @@ mod tests {
     fn the_grace_period_is_short_but_not_instant() {
         assert!(GRACE >= std::time::Duration::from_secs(1));
         assert!(GRACE <= std::time::Duration::from_secs(10));
+    }
+
+    /// A bundle anywhere must be found, not only the one in /Applications:
+    /// a fleet install without admin rights lands in ~/Applications.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_bundle_is_found_wherever_it_was_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let macos = dir.path().join("Elsewhere/Voxtype.app/Contents/MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        let bundle = macos.parent().unwrap().parent().unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), "<plist/>").unwrap();
+
+        // containing_bundle() reads current_exe, so exercise the same walk on
+        // a path we control: three parents up, and it must look like a bundle.
+        let exe = macos.join("voxtype-bin");
+        let found = exe.parent().unwrap().parent().unwrap().parent().unwrap();
+        assert_eq!(found, bundle);
+        assert_eq!(found.extension().unwrap(), "app");
+        assert!(found.join("Contents/Info.plist").is_file());
+        assert_ne!(
+            found,
+            crate::setup::app_bundle::app_bundle_path(),
+            "the point is that it is not the installed location"
+        );
+    }
+
+    /// A bare binary outside any bundle must not be mistaken for one.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_loose_binary_is_not_a_bundle() {
+        assert!(
+            containing_bundle().is_none(),
+            "the test harness is not inside Voxtype.app, yet one was reported"
+        );
     }
 
     /// The process doing the restart must never be on its own kill list,
