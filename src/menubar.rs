@@ -265,7 +265,7 @@ fn open_path(path: &str) {
 
 /// Matches the settings executable and nothing else — notably not
 /// `voxtype-bin`, whose command line never contains this path.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
 const SETTINGS_PROCESS: &str = "VoxtypeSetup.app/Contents/MacOS/VoxtypeSetup";
 
 /// End a settings process left running with no windows, and wait for it to go.
@@ -280,7 +280,7 @@ const SETTINGS_PROCESS: &str = "VoxtypeSetup.app/Contents/MacOS/VoxtypeSetup";
 /// process is gone, and `open` on a corpse macOS still counts as running would
 /// activate it and show nothing — the very bug being fixed, back by a
 /// different door.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
 fn sweep_settings_app() {
     let _ = std::process::Command::new("pkill")
         .args(["-f", SETTINGS_PROCESS])
@@ -307,7 +307,7 @@ fn sweep_settings_app() {
 /// cycle in three failed this way. Retrying costs nothing; a menu item that
 /// silently does nothing is exactly the bug being fixed. If it never takes,
 /// say so rather than leave the user guessing.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
 fn open_settings_app(app: &std::path::Path) {
     for _ in 0..15 {
         let opened = std::process::Command::new("open")
@@ -328,13 +328,42 @@ fn open_settings_app(app: &std::path::Path) {
 
 /// The settings window, VoxtypeSetup.app, which Voxtype.app carries next to
 /// this binary
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
 fn settings_app() -> Option<std::path::PathBuf> {
     let app = std::env::current_exe()
         .ok()?
         .parent()?
         .join("VoxtypeSetup.app");
     app.exists().then_some(app)
+}
+
+/// Open the settings window, `voxtype settings`, as a child of this process.
+///
+/// Closing the window ends that process, so nothing lingers. A window still
+/// open from an earlier click is replaced rather than left behind other
+/// windows, where the click would seem to do nothing.
+#[cfg(feature = "settings-gui")]
+fn open_settings_window() {
+    static WINDOW: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+    let Ok(mut window) = WINDOW.lock() else {
+        return;
+    };
+    if let Some(old) = window.as_mut() {
+        let _ = old.kill();
+        let _ = old.wait();
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("settings");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    *window = cmd.spawn().ok();
 }
 
 /// Check if LaunchAgent is installed
@@ -716,9 +745,9 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
     let config_item = MenuItem::with_id(menu_ids::OPEN_CONFIG, "Edit Config File...", true, None);
     let restart_item = MenuItem::with_id(menu_ids::RESTART_DAEMON, "Restart Daemon", true, None);
 
-    #[cfg(windows)]
+    #[cfg(any(windows, feature = "settings-gui"))]
     let has_settings = true;
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
     let has_settings = settings_app().is_some();
     if has_settings {
         let settings_item = MenuItem::with_id(menu_ids::SETTINGS, "Settings...", true, None);
@@ -927,7 +956,9 @@ pub fn run(state_file: PathBuf) -> ! {
                 // Utilities
                 #[cfg(windows)]
                 menu_ids::DOWNLOAD_MODEL => open_console(&["setup", "model"]),
-                #[cfg(windows)]
+                #[cfg(feature = "settings-gui")]
+                menu_ids::SETTINGS => open_settings_window(),
+                #[cfg(all(windows, not(feature = "settings-gui")))]
                 menu_ids::SETTINGS => open_console(&["configure"]),
                 #[cfg(target_os = "macos")]
                 menu_ids::DOWNLOAD_MODEL => {
@@ -941,7 +972,7 @@ pub fn run(state_file: PathBuf) -> ! {
                         .args(["-e", &script])
                         .spawn();
                 }
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
                 menu_ids::SETTINGS => {
                     if let Some(app) = settings_app() {
                         // Sweep a settings process left running with no

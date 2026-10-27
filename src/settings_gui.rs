@@ -18,6 +18,18 @@ use crate::config_set;
 
 pub fn run(path: PathBuf) -> anyhow::Result<()> {
     let config = load_config(Some(&path))?;
+    let result = open(eframe::Renderer::Glow, path.clone(), config.clone());
+    // Some Windows machines, VMs among them, have no OpenGL 2 driver; wgpu
+    // goes through Direct3D there.
+    #[cfg(windows)]
+    let result = result.or_else(|e| {
+        tracing::warn!("OpenGL unavailable ({e}), trying Direct3D");
+        open(eframe::Renderer::Wgpu, path, config)
+    });
+    result.map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn open(renderer: eframe::Renderer, path: PathBuf, config: Config) -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Voxtype Settings")
         .with_app_id("voxtype-settings")
@@ -25,7 +37,7 @@ pub fn run(path: PathBuf) -> anyhow::Result<()> {
         .with_min_inner_size([640.0, 420.0]);
     let options = eframe::NativeOptions {
         viewport,
-        renderer: eframe::Renderer::Glow,
+        renderer,
         ..Default::default()
     };
     eframe::run_native(
@@ -36,7 +48,6 @@ pub fn run(path: PathBuf) -> anyhow::Result<()> {
             Ok(Box::new(SettingsApp::new(path, config)))
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 struct SettingsApp {
@@ -141,6 +152,9 @@ impl SettingsApp {
         );
         if std::mem::take(&mut self.focus_search) {
             search.request_focus();
+            // Launched from a menu bar icon, the window may open behind
+            // whatever app had focus.
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         ui.add_space(12.0);
         for section in schema::SECTIONS {

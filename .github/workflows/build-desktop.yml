@@ -31,14 +31,14 @@ jobs:
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
-        run: cargo build --release --features parakeet
+        run: cargo build --release --features parakeet,settings-gui
 
       - name: Test the Windows-specific modules
         shell: pwsh
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
-        run: "cargo test --release --features parakeet --lib -- win:: hotkey_windows sendinput audio::levels setup::start"
+        run: "cargo test --release --features parakeet,settings-gui --lib -- win:: hotkey_windows sendinput audio::levels setup::start"
 
       - name: Smoke test
         shell: pwsh
@@ -59,7 +59,7 @@ jobs:
       # scripts/build-macos.sh.
       ORT_VERSION: '1.24.2'
       # Same engine set as the upstream DMG.
-      FEATURES: gpu-metal,parakeet-coreml,moonshine,sensevoice,paraformer,dolphin,omnilingual,cohere
+      FEATURES: gpu-metal,parakeet-coreml,moonshine,sensevoice,paraformer,dolphin,omnilingual,cohere,settings-gui
     steps:
       - uses: actions/checkout@v4
 
@@ -190,7 +190,7 @@ jobs:
             libgtk-3-dev libglib2.0-dev libx11-dev libxi-dev libxtst-dev
 
       - name: Build
-        run: cargo build --release --features parakeet
+        run: cargo build --release --features parakeet,settings-gui
 
       - name: Smoke test
         run: target/release/voxtype --version
