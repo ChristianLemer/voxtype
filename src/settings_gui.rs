@@ -18,14 +18,23 @@ use crate::config_set;
 
 pub fn run(path: PathBuf) -> anyhow::Result<()> {
     let config = load_config(Some(&path))?;
-    let result = open(eframe::Renderer::Glow, path.clone(), config.clone());
-    // Some Windows machines, VMs among them, have no OpenGL 2 driver; wgpu
-    // goes through Direct3D there.
+    let result = open(eframe::Renderer::Glow, path.clone(), config);
+    // Some Windows machines, VMs among them, have no OpenGL 2 driver. Rather
+    // than leave "Settings..." doing nothing there, open the text interface.
     #[cfg(windows)]
-    let result = result.or_else(|e| {
-        tracing::warn!("OpenGL unavailable ({e}), trying Direct3D");
-        open(eframe::Renderer::Wgpu, path, config)
-    });
+    if let Err(e) = &result {
+        tracing::warn!("OpenGL unavailable ({e}), opening the text interface");
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        let exe = std::env::current_exe()?;
+        std::process::Command::new(exe)
+            .arg("--config")
+            .arg(&path)
+            .arg("configure")
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()?;
+        return Ok(());
+    }
     result.map_err(|e| anyhow::anyhow!("{e}"))
 }
 
