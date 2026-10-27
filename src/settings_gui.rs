@@ -21,8 +21,8 @@ pub fn run(path: PathBuf) -> anyhow::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Voxtype Settings")
         .with_app_id("voxtype-settings")
-        .with_inner_size([820.0, 600.0])
-        .with_min_inner_size([560.0, 360.0]);
+        .with_inner_size([900.0, 640.0])
+        .with_min_inner_size([640.0, 420.0]);
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Glow,
@@ -31,7 +31,10 @@ pub fn run(path: PathBuf) -> anyhow::Result<()> {
     eframe::run_native(
         "voxtype-settings",
         options,
-        Box::new(move |_cc| Ok(Box::new(SettingsApp::new(path, config)))),
+        Box::new(move |cc| {
+            style(&cc.egui_ctx);
+            Ok(Box::new(SettingsApp::new(path, config)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -47,6 +50,8 @@ struct SettingsApp {
     sources: HashMap<&'static str, Vec<Choice>>,
     restart_pending: bool,
     message: Option<(bool, String)>,
+    /// Focus the search field on the first frame: type to find a setting.
+    focus_search: bool,
 }
 
 struct Choice {
@@ -66,6 +71,7 @@ impl SettingsApp {
             sources: HashMap::new(),
             restart_pending: false,
             message: None,
+            focus_search: true,
         }
     }
 
@@ -126,19 +132,27 @@ impl SettingsApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        ui.add(
+        ui.add_space(14.0);
+        let search = ui.add(
             egui::TextEdit::singleline(&mut self.search)
-                .hint_text("Search")
+                .hint_text("🔍 Search")
+                .margin(egui::Margin::symmetric(8, 6))
                 .desired_width(f32::INFINITY),
         );
-        ui.add_space(8.0);
+        if std::mem::take(&mut self.focus_search) {
+            search.request_focus();
+        }
+        ui.add_space(12.0);
         for section in schema::SECTIONS {
             if self.keys_in(section).is_empty() {
                 continue;
             }
             let selected = self.search.is_empty() && self.section == *section;
-            if ui.selectable_label(selected, *section).clicked() {
+            let text = format!("{}   {}", section_icon(section), section);
+            let button = egui::Button::selectable(selected, text)
+                .min_size(egui::vec2(ui.available_width(), 30.0))
+                .corner_radius(6);
+            if ui.add(button).clicked() {
                 self.section = section;
                 self.search.clear();
             }
@@ -149,7 +163,13 @@ impl SettingsApp {
         ui.horizontal(|ui| {
             if self.restart_pending {
                 ui.label("Some changes take effect after a restart.");
-                if ui.button("Restart Voxtype").clicked() {
+                let accent = ui.visuals().selection.bg_fill;
+                let restart = egui::Button::new(
+                    egui::RichText::new("Restart Voxtype").color(egui::Color32::WHITE),
+                )
+                .fill(accent)
+                .corner_radius(6);
+                if ui.add(restart).clicked() {
                     match restart_daemon() {
                         Ok(()) => {
                             self.restart_pending = false;
@@ -173,46 +193,81 @@ impl SettingsApp {
     }
 
     fn pane(&mut self, ui: &mut egui::Ui) {
-        let (title, keys) = if self.search.is_empty() {
-            (self.section.to_string(), self.keys_in(self.section))
-        } else {
+        let searching = !self.search.is_empty();
+        let (title, keys) = if searching {
             let search = self.search.clone();
             (format!("Results for “{search}”"), self.matching(&search))
+        } else {
+            (self.section.to_string(), self.keys_in(self.section))
         };
-        ui.heading(title);
-        ui.add_space(4.0);
+        ui.add_space(14.0);
+        ui.heading(egui::RichText::new(title).strong());
+        ui.add_space(10.0);
         if keys.is_empty() {
             ui.weak("Nothing here.");
+            return;
         }
+
+        // One card per config table, in schema order: "Feedback" under
+        // Audio, "Diarization" under Meeting, one card per engine.
+        let mut groups: Vec<(String, Vec<&'static KeySpec>)> = Vec::new();
+        for spec in keys {
+            let name = if searching {
+                spec.section.to_string()
+            } else {
+                spec.table.to_string()
+            };
+            match groups.last_mut() {
+                Some((last, specs)) if *last == name => specs.push(spec),
+                _ => groups.push((name, vec![spec])),
+            }
+        }
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for spec in keys {
-                    self.row(ui, spec);
-                    ui.separator();
+                ui.set_max_width(ui.available_width() - 16.0);
+                for (i, (name, specs)) in groups.into_iter().enumerate() {
+                    if searching || i > 0 {
+                        let title = if searching { name } else { humanize(&name) };
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(title).strong().weak());
+                        ui.add_space(4.0);
+                    }
+                    card(ui).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let last = specs.len() - 1;
+                        for (j, spec) in specs.into_iter().enumerate() {
+                            self.row(ui, spec);
+                            if j != last {
+                                ui.separator();
+                            }
+                        }
+                    });
+                    ui.add_space(14.0);
                 }
             });
     }
 
     fn row(&mut self, ui: &mut egui::Ui, spec: &'static KeySpec) {
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.strong(spec.label);
-            if spec.restart_required {
-                ui.weak("· restart")
-                    .on_hover_text("Takes effect after a restart");
-            }
+            // Leave the control a fixed column so labels wrap before it.
+            let text_width = (ui.available_width() - 250.0).max(160.0);
+            ui.vertical(|ui| {
+                ui.set_width(text_width);
+                let strong = ui.visuals().strong_text_color();
+                let label = ui.label(egui::RichText::new(spec.label).size(14.5).color(strong));
+                if spec.restart_required {
+                    label.on_hover_text("Takes effect after Voxtype restarts");
+                }
+                ui.label(egui::RichText::new(spec.description).size(12.0).weak());
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.control(ui, spec);
             });
         });
-        let help = if self.search.is_empty() {
-            spec.description.to_string()
-        } else {
-            format!("{} — {}", spec.section, spec.description)
-        };
-        ui.label(egui::RichText::new(help).weak());
-        ui.add_space(4.0);
+        ui.add_space(6.0);
     }
 
     fn control(&mut self, ui: &mut egui::Ui, spec: &'static KeySpec) {
@@ -220,7 +275,7 @@ impl SettingsApp {
         match spec.ty {
             KeyType::Bool => {
                 let mut on = current == "true";
-                if ui.checkbox(&mut on, "").changed() {
+                if toggle(ui, &mut on).changed() {
                     self.write(spec, if on { "true" } else { "false" });
                 }
             }
@@ -249,6 +304,7 @@ impl SettingsApp {
             } => {
                 let mut picked = current.clone();
                 egui::ComboBox::from_id_salt(spec.key)
+                    .width(200.0)
                     .selected_text(if picked.is_empty() { "—" } else { &picked })
                     .show_ui(ui, |ui| {
                         for c in choices {
@@ -327,7 +383,7 @@ impl SettingsApp {
             .drafts
             .entry(spec.key)
             .or_insert_with(|| current.to_string());
-        let r = ui.add(egui::TextEdit::singleline(draft).desired_width(220.0));
+        let r = ui.add(egui::TextEdit::singleline(draft).desired_width(180.0));
         if r.lost_focus() {
             let text = draft.trim().to_string();
             self.drafts.remove(spec.key);
@@ -343,18 +399,147 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::bottom("status")
-            .show_separator_line(true)
-            .show_inside(ui, |ui| {
-                ui.add_space(4.0);
-                self.status_bar(ui);
-                ui.add_space(2.0);
-            });
+        let sidebar_fill = sidebar_color(ui.visuals());
+        if self.restart_pending || self.message.is_some() {
+            egui::Panel::bottom("status")
+                .show_separator_line(true)
+                .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 8)))
+                .show_inside(ui, |ui| self.status_bar(ui));
+        }
         egui::Panel::left("sections")
             .resizable(false)
-            .exact_size(180.0)
+            .exact_size(200.0)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(sidebar_fill)
+                    .inner_margin(egui::Margin::symmetric(12, 0)),
+            )
             .show_inside(ui, |ui| self.sidebar(ui));
-        egui::CentralPanel::default().show_inside(ui, |ui| self.pane(ui));
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(content_color(ui.visuals()))
+                    .inner_margin(egui::Margin {
+                        left: 24,
+                        right: 8,
+                        top: 0,
+                        bottom: 0,
+                    }),
+            )
+            .show_inside(ui, |ui| self.pane(ui));
+    }
+}
+
+fn style(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        style.spacing.interact_size.y = 26.0;
+        for w in [
+            &mut style.visuals.widgets.inactive,
+            &mut style.visuals.widgets.hovered,
+            &mut style.visuals.widgets.active,
+            &mut style.visuals.widgets.open,
+        ] {
+            w.corner_radius = egui::CornerRadius::same(6);
+        }
+        style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(10);
+        style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+        if let Some(body) = style.text_styles.get_mut(&egui::TextStyle::Body) {
+            body.size = 14.0;
+        }
+        if let Some(button) = style.text_styles.get_mut(&egui::TextStyle::Button) {
+            button.size = 14.0;
+        }
+        if let Some(heading) = style.text_styles.get_mut(&egui::TextStyle::Heading) {
+            heading.size = 22.0;
+        }
+    });
+}
+
+/// A rounded card, a shade apart from the window, like a grouped form.
+fn card(ui: &egui::Ui) -> egui::Frame {
+    let visuals = ui.visuals();
+    let (fill, stroke) = if visuals.dark_mode {
+        (egui::Color32::from_gray(38), egui::Color32::from_gray(52))
+    } else {
+        (egui::Color32::WHITE, egui::Color32::from_gray(222))
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0_f32, stroke))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(16, 6))
+}
+
+fn content_color(visuals: &egui::Visuals) -> egui::Color32 {
+    if visuals.dark_mode {
+        egui::Color32::from_gray(30)
+    } else {
+        egui::Color32::from_gray(246)
+    }
+}
+
+/// An on/off switch, the way macOS and Windows settings show a boolean.
+fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let size = egui::vec2(38.0, 22.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool_responsive(response.id, *on);
+        let visuals = ui.visuals();
+        let off_fill = if visuals.dark_mode {
+            egui::Color32::from_gray(70)
+        } else {
+            egui::Color32::from_gray(200)
+        };
+        let fill = off_fill.lerp_to_gamma(visuals.selection.bg_fill, t);
+        let radius = rect.height() / 2.0;
+        ui.painter().rect_filled(rect, radius, fill);
+        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
+        let knob = egui::pos2(x, rect.center().y);
+        ui.painter()
+            .circle_filled(knob, radius - 2.5, egui::Color32::WHITE);
+    }
+    response
+}
+
+fn sidebar_color(visuals: &egui::Visuals) -> egui::Color32 {
+    if visuals.dark_mode {
+        egui::Color32::from_gray(24)
+    } else {
+        egui::Color32::from_gray(236)
+    }
+}
+
+fn section_icon(section: &str) -> &'static str {
+    match section {
+        "Engine" => "⚙",
+        "Hotkey" => "⌨",
+        "Audio" => "🎤",
+        "Output" => "✏",
+        "Text" => "🔤",
+        "VAD" => "〰",
+        "Meeting" => "👥",
+        "Notifications" => "🔔",
+        "OSD" => "💬",
+        "Status" => "📊",
+        _ => "🔧",
+    }
+}
+
+/// `meeting.diarization` → "Diarization", `output.post_process` → "Post process".
+fn humanize(table: &str) -> String {
+    let last = table.rsplit('.').next().unwrap_or(table).replace('_', " ");
+    let mut chars = last.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
