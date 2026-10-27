@@ -76,6 +76,11 @@ pub(crate) async fn dispatch(
             let mut daemon = daemon::Daemon::new(config, config_path);
             daemon.run().await?;
         }
+        #[cfg(feature = "settings-gui")]
+        Commands::Settings => {
+            let path = super::config_set::resolve_config_path_for_write(cli.config.clone())?;
+            voxtype::settings_gui::run(path)?;
+        }
         #[cfg(any(target_os = "macos", windows))]
         Commands::OsdCard => {
             voxtype::osd::desktop::run(config_path.as_deref())?;

@@ -77,6 +77,11 @@ pub enum Commands {
     #[command(hide = true)]
     OsdCard,
 
+    /// Open the settings window (started from the menu bar icon)
+    #[cfg(feature = "settings-gui")]
+    #[command(hide = true)]
+    Settings,
+
     /// Launch daemon + menubar (used by Voxtype.app bundle)
     #[cfg(target_os = "macos")]
     #[command(hide = true)]

@@ -91,6 +91,8 @@ pub mod model_manager;
 pub mod notification;
 pub mod osd;
 pub mod output;
+#[cfg(feature = "settings-gui")]
+pub mod settings_gui;
 pub mod setup;
 pub mod state;
 pub mod status_json;

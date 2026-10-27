@@ -141,6 +141,10 @@ cairo-rs = { version = "0.22", optional = true }
 glib = { version = "0.22", optional = true }
 rubato = "0.16"
 
+# Settings window (`voxtype settings`), generated from the config schema.
+# Optional and off by default; the desktop builds turn it on.
+eframe = { version = "0.34", optional = true, default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tao = "0.32"
 core-graphics = "0.24"
@@ -203,6 +207,7 @@ osd-native = [
     "dep:bytemuck",
 ]
 osd-gtk4 = ["dep:gtk4", "dep:gtk4-layer-shell", "dep:cairo-rs", "dep:glib"]
+settings-gui = ["dep:eframe"]
 gpu-vulkan = ["whisper-rs/vulkan"]
 gpu-cuda = ["whisper-rs/cuda"]
 gpu-metal = ["whisper-rs/metal"]
