@@ -171,6 +171,14 @@ version = "0.34"
 default-features = false
 features = ["glow"]
 
+[target.'cfg(windows)'.dependencies.eframe]
+# The settings window falls back to Direct3D, which Windows can render in
+# software (WARP) where no GPU driver provides OpenGL 2.
+version = "0.34"
+optional = true
+default-features = false
+features = ["wgpu"]
+
 [target.'cfg(windows)'.dependencies]
 tao = "0.32"  # event loop for the notification-area icon (src/menubar.rs)
 tray-icon = "0.21.3"

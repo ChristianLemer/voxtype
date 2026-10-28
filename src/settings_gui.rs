@@ -16,26 +16,50 @@ use crate::config::schema::{self, KeySpec, KeyType};
 use crate::config::{load_config, Config};
 use crate::config_set;
 
+/// Set on a relaunch to pick the renderer: winit cannot build a second event
+/// loop in one process, so a failed renderer is retried in a fresh one.
+#[cfg(windows)]
+const RENDERER_VAR: &str = "VOXTYPE_SETTINGS_RENDERER";
+
 pub fn run(path: PathBuf) -> anyhow::Result<()> {
     let config = load_config(Some(&path))?;
-    let result = open(eframe::Renderer::Glow, path.clone(), config);
-    // Some Windows machines, VMs among them, have no OpenGL 2 driver. Rather
-    // than leave "Settings..." doing nothing there, open the text interface.
+
+    #[cfg(not(windows))]
+    return open(eframe::Renderer::Glow, path, config).map_err(|e| anyhow::anyhow!("{e}"));
+
+    // Some Windows machines, VMs and remote desktop sessions among them, have
+    // no OpenGL 2 driver. Direct3D still works there: Windows renders it in
+    // software (WARP) when no GPU driver does. Should that fail too, open the
+    // text interface rather than leave "Settings..." doing nothing.
     #[cfg(windows)]
-    if let Err(e) = &result {
-        tracing::warn!("OpenGL unavailable ({e}), opening the text interface");
+    {
         use std::os::windows::process::CommandExt;
-        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
         let exe = std::env::current_exe()?;
-        std::process::Command::new(exe)
-            .arg("--config")
-            .arg(&path)
-            .arg("configure")
-            .creation_flags(CREATE_NEW_CONSOLE)
-            .spawn()?;
-        return Ok(());
+        let relaunch = |args: &[&str], flags: u32, renderer: Option<&str>| {
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.arg("--config")
+                .arg(&path)
+                .args(args)
+                .creation_flags(flags);
+            if let Some(r) = renderer {
+                cmd.env(RENDERER_VAR, r);
+            }
+            cmd.spawn().map(|_| ())
+        };
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+        if std::env::var(RENDERER_VAR).as_deref() == Ok("wgpu") {
+            if let Err(e) = open(eframe::Renderer::Wgpu, path.clone(), config) {
+                tracing::warn!("Direct3D unavailable ({e}), opening the text interface");
+                relaunch(&["configure"], CREATE_NEW_CONSOLE, None)?;
+            }
+        } else if let Err(e) = open(eframe::Renderer::Glow, path.clone(), config) {
+            tracing::warn!("OpenGL unavailable ({e}), trying Direct3D");
+            relaunch(&["settings"], CREATE_NO_WINDOW, Some("wgpu"))?;
+        }
+        Ok(())
     }
-    result.map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn open(renderer: eframe::Renderer, path: PathBuf, config: Config) -> eframe::Result {
