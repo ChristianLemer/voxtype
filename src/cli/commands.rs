@@ -80,7 +80,11 @@ pub enum Commands {
     /// Open the settings window (started from the menu bar icon)
     #[cfg(feature = "settings-gui")]
     #[command(hide = true)]
-    Settings,
+    Settings {
+        /// Pane to open first, e.g. Models or Permissions
+        #[arg(long, value_name = "NAME")]
+        section: Option<String>,
+    },
 
     /// Launch daemon + menubar (used by Voxtype.app bundle)
     #[cfg(target_os = "macos")]

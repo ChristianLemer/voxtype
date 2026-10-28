@@ -247,7 +247,7 @@ fn open_path(path: &str) {
 }
 
 /// Run a voxtype command in a console window of its own
-#[cfg(windows)]
+#[cfg(all(windows, not(feature = "settings-gui")))]
 fn open_console(args: &[&str]) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
@@ -343,7 +343,7 @@ fn settings_app() -> Option<std::path::PathBuf> {
 /// open from an earlier click is replaced rather than left behind other
 /// windows, where the click would seem to do nothing.
 #[cfg(feature = "settings-gui")]
-fn open_settings_window() {
+fn open_settings_window(section: Option<&str>) {
     static WINDOW: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
     let Ok(mut window) = WINDOW.lock() else {
         return;
@@ -357,6 +357,9 @@ fn open_settings_window() {
     };
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("settings");
+    if let Some(section) = section {
+        cmd.args(["--section", section]);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -954,13 +957,15 @@ pub fn run(state_file: PathBuf) -> ! {
                 }
 
                 // Utilities
-                #[cfg(windows)]
-                menu_ids::DOWNLOAD_MODEL => open_console(&["setup", "model"]),
                 #[cfg(feature = "settings-gui")]
-                menu_ids::SETTINGS => open_settings_window(),
+                menu_ids::DOWNLOAD_MODEL => open_settings_window(Some("Models")),
+                #[cfg(feature = "settings-gui")]
+                menu_ids::SETTINGS => open_settings_window(None),
+                #[cfg(all(windows, not(feature = "settings-gui")))]
+                menu_ids::DOWNLOAD_MODEL => open_console(&["setup", "model"]),
                 #[cfg(all(windows, not(feature = "settings-gui")))]
                 menu_ids::SETTINGS => open_console(&["configure"]),
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", not(feature = "settings-gui")))]
                 menu_ids::DOWNLOAD_MODEL => {
                     // Open terminal with model download command
                     let voxtype_path = get_voxtype_path();

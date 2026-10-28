@@ -77,9 +77,9 @@ pub(crate) async fn dispatch(
             daemon.run().await?;
         }
         #[cfg(feature = "settings-gui")]
-        Commands::Settings => {
+        Commands::Settings { section } => {
             let path = super::config_set::resolve_config_path_for_write(cli.config.clone())?;
-            voxtype::settings_gui::run(path)?;
+            voxtype::settings_gui::run(path, section)?;
         }
         #[cfg(any(target_os = "macos", windows))]
         Commands::OsdCard => {

@@ -12,6 +12,10 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde_json::Value as Json;
 
+mod models;
+#[cfg(target_os = "macos")]
+mod permissions;
+
 use crate::config::schema::{self, KeySpec, KeyType};
 use crate::config::{load_config, Config};
 use crate::config_set;
@@ -21,11 +25,11 @@ use crate::config_set;
 #[cfg(windows)]
 const RENDERER_VAR: &str = "VOXTYPE_SETTINGS_RENDERER";
 
-pub fn run(path: PathBuf) -> anyhow::Result<()> {
+pub fn run(path: PathBuf, section: Option<String>) -> anyhow::Result<()> {
     let config = load_config(Some(&path))?;
 
     #[cfg(not(windows))]
-    return open(eframe::Renderer::Glow, path, config).map_err(|e| anyhow::anyhow!("{e}"));
+    return open(eframe::Renderer::Glow, path, config, section).map_err(|e| anyhow::anyhow!("{e}"));
 
     // Some Windows machines, VMs and remote desktop sessions among them, have
     // no OpenGL 2 driver. Direct3D still works there: Windows renders it in
@@ -50,19 +54,33 @@ pub fn run(path: PathBuf) -> anyhow::Result<()> {
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
         if std::env::var(RENDERER_VAR).as_deref() == Ok("wgpu") {
-            if let Err(e) = open(eframe::Renderer::Wgpu, path.clone(), config) {
+            if let Err(e) = open(eframe::Renderer::Wgpu, path.clone(), config, section) {
                 tracing::warn!("Direct3D unavailable ({e}), opening the text interface");
                 relaunch(&["configure"], CREATE_NEW_CONSOLE, None)?;
             }
-        } else if let Err(e) = open(eframe::Renderer::Glow, path.clone(), config) {
+        } else if let Err(e) = open(
+            eframe::Renderer::Glow,
+            path.clone(),
+            config,
+            section.clone(),
+        ) {
             tracing::warn!("OpenGL unavailable ({e}), trying Direct3D");
-            relaunch(&["settings"], CREATE_NO_WINDOW, Some("wgpu"))?;
+            let mut args = vec!["settings"];
+            if let Some(section) = section.as_deref() {
+                args.extend(["--section", section]);
+            }
+            relaunch(&args, CREATE_NO_WINDOW, Some("wgpu"))?;
         }
         Ok(())
     }
 }
 
-fn open(renderer: eframe::Renderer, path: PathBuf, config: Config) -> eframe::Result {
+fn open(
+    renderer: eframe::Renderer,
+    path: PathBuf,
+    config: Config,
+    section: Option<String>,
+) -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Voxtype Settings")
         .with_app_id("voxtype-settings")
@@ -78,7 +96,7 @@ fn open(renderer: eframe::Renderer, path: PathBuf, config: Config) -> eframe::Re
         options,
         Box::new(move |cc| {
             style(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::new(path, config)))
+            Ok(Box::new(SettingsApp::new(path, config, section.as_deref())))
         }),
     )
 }
@@ -96,7 +114,22 @@ struct SettingsApp {
     message: Option<(bool, String)>,
     /// Focus the search field on the first frame: type to find a setting.
     focus_search: bool,
+    models: models::State,
+    #[cfg(target_os = "macos")]
+    permissions: permissions::State,
 }
+
+/// Panes that are not a schema section: they act rather than set a key.
+const MODELS: &str = "Models";
+#[cfg(target_os = "macos")]
+const PERMISSIONS: &str = "Permissions";
+
+/// Panes besides the schema's sections.
+const EXTRA_PANES: &[&str] = &[
+    MODELS,
+    #[cfg(target_os = "macos")]
+    PERMISSIONS,
+];
 
 struct Choice {
     name: String,
@@ -105,17 +138,29 @@ struct Choice {
 }
 
 impl SettingsApp {
-    fn new(path: PathBuf, config: Config) -> Self {
+    fn new(path: PathBuf, config: Config, section: Option<&str>) -> Self {
+        let section = section
+            .and_then(|wanted| {
+                schema::SECTIONS
+                    .iter()
+                    .chain(EXTRA_PANES)
+                    .find(|p| p.eq_ignore_ascii_case(wanted))
+            })
+            .copied()
+            .unwrap_or(schema::SECTIONS[0]);
         Self {
             path,
             config,
-            section: schema::SECTIONS[0],
+            section,
             search: String::new(),
             drafts: HashMap::new(),
             sources: HashMap::new(),
             restart_pending: false,
             message: None,
             focus_search: true,
+            models: models::State::default(),
+            #[cfg(target_os = "macos")]
+            permissions: permissions::State::default(),
         }
     }
 
@@ -190,11 +235,19 @@ impl SettingsApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         ui.add_space(12.0);
+        let mut entries: Vec<&'static str> = Vec::new();
         for section in schema::SECTIONS {
-            if self.keys_in(section).is_empty() {
-                continue;
+            if !self.keys_in(section).is_empty() {
+                entries.push(section);
             }
-            let selected = self.search.is_empty() && self.section == *section;
+            if *section == "Engine" {
+                entries.push(MODELS);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        entries.push(PERMISSIONS);
+        for section in entries {
+            let selected = self.search.is_empty() && self.section == section;
             let text = format!("{}   {}", section_icon(section), section);
             let button = egui::Button::selectable(selected, text)
                 .min_size(egui::vec2(ui.available_width(), 30.0))
@@ -241,6 +294,13 @@ impl SettingsApp {
 
     fn pane(&mut self, ui: &mut egui::Ui) {
         let searching = !self.search.is_empty();
+        if !searching && self.section == MODELS {
+            return self.models_pane(ui);
+        }
+        #[cfg(target_os = "macos")]
+        if !searching && self.section == PERMISSIONS {
+            return self.permissions_pane(ui);
+        }
         let (title, keys) = if searching {
             let search = self.search.clone();
             (format!("Results for “{search}”"), self.matching(&search))
@@ -576,6 +636,8 @@ fn section_icon(section: &str) -> &'static str {
         "Notifications" => "🔔",
         "OSD" => "💬",
         "Status" => "📊",
+        "Models" => "📦",
+        "Permissions" => "🔒",
         _ => "🔧",
     }
 }
@@ -600,10 +662,15 @@ fn fetch_choices(source: &str) -> Vec<Choice> {
     let Ok(exe) = std::env::current_exe() else {
         return Vec::new();
     };
-    let Ok(out) = std::process::Command::new(exe)
-        .args(["info", source, "--json"])
-        .output()
-    else {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["info", source, "--json"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let Ok(out) = cmd.output() else {
         return Vec::new();
     };
     let Ok(doc) = serde_json::from_slice::<Json>(&out.stdout) else {
