@@ -101,10 +101,12 @@ jobs:
           dist/voxtype --version
           dist/voxtype info engines
 
-      # Upstream's script assembles Voxtype.app (Swift menubar and setup
-      # apps, the binary, ONNX Runtime in Frameworks) and the DMG. The
-      # recording card is a subcommand of the binary, so nothing is added.
+      # Upstream's script assembles Voxtype.app (the binary, ONNX Runtime in
+      # Frameworks) and the DMG. The recording card and the settings window
+      # are subcommands of the binary, so the Swift settings app stays out.
       - name: Build Voxtype.app and DMG
+        env:
+          VOXTYPE_SKIP_SETUP_APP: '1'
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -113,7 +115,7 @@ jobs:
           cp "$ORT_LIB_DIR/libonnxruntime.${ORT_VERSION}.dylib" "releases/$VERSION/"
           VOXTYPE_SKIP_DMG=1 ./scripts/build-macos-dmg.sh "$VERSION"
           # Without a Developer ID, seal the whole bundle ad hoc. The script
-          # signs only the binary, then adds Info.plist and the nested apps,
+          # signs only the binary, then adds Info.plist and the resources,
           # which leaves the bundle unsealed: macOS calls it "damaged".
           codesign --force --deep --sign - --preserve-metadata=entitlements "releases/$VERSION/Voxtype.app"
           codesign --verify --deep --strict --verbose=2 "releases/$VERSION/Voxtype.app"
@@ -151,6 +153,8 @@ jobs:
           ditto -x -k "releases/$VERSION/Voxtype-macos-arm64.app.zip" /tmp/zipcheck
           codesign --verify --deep --strict --verbose=2 /tmp/zipcheck/Voxtype.app
           /tmp/zipcheck/Voxtype.app/Contents/MacOS/voxtype-bin --version
+          /tmp/zipcheck/Voxtype.app/Contents/MacOS/voxtype-bin settings --help > /dev/null
+          test ! -e /tmp/zipcheck/Voxtype.app/Contents/MacOS/VoxtypeSetup.app
           ( cd "releases/$VERSION" && shasum -a 256 -c SHA256SUMS.txt )
           rm -rf /tmp/zipcheck
 

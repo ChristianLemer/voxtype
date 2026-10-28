@@ -19,6 +19,9 @@
 # CI needs to sign the .app in between, so each phase can run alone:
 #   VOXTYPE_SKIP_DMG=1  build Voxtype.app, stop before the DMG
 #   VOXTYPE_SKIP_APP=1  package the DMG from an already-built Voxtype.app
+#
+# VOXTYPE_SKIP_SETUP_APP=1 leaves out the Swift VoxtypeSetup.app, for a binary
+# built with the settings-gui feature, whose menu bar opens `voxtype settings`.
 
 set -euo pipefail
 
@@ -74,6 +77,7 @@ echo
 
 # Build the settings window. The menu bar icon is the Rust binary's own
 # (`voxtype menubar`), so the Swift VoxtypeMenubar app is not bundled.
+if [[ "${VOXTYPE_SKIP_SETUP_APP:-}" != "1" ]]; then
 echo -e "${YELLOW}Building VoxtypeSetup...${NC}"
 cd "${PROJECT_DIR}/macos/VoxtypeSetup"
 ./build-app.sh
@@ -83,6 +87,7 @@ SETUP_APP="${PROJECT_DIR}/macos/VoxtypeSetup/.build/VoxtypeSetup.app"
 if [[ ! -d "$SETUP_APP" ]]; then
     echo -e "${RED}Error: VoxtypeSetup.app not found${NC}"
     exit 1
+fi
 fi
 
 # Create app bundle structure
@@ -119,7 +124,9 @@ if [[ -n "$ORT_DYLIB" ]]; then
 fi
 
 # Copy VoxtypeSetup.app
-cp -R "$SETUP_APP" "$APP_DIR/Contents/MacOS/"
+if [[ "${VOXTYPE_SKIP_SETUP_APP:-}" != "1" ]]; then
+    cp -R "$SETUP_APP" "$APP_DIR/Contents/MacOS/"
+fi
 
 # Copy engine icons for notifications
 if [[ -f "${PROJECT_DIR}/assets/engines/parakeet.png" ]]; then
