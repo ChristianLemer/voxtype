@@ -53,7 +53,7 @@ jobs:
             target/release/voxtype.exe
 
   macos:
-    runs-on: macos-14  # Apple Silicon
+    runs-on: macos-15  # Apple Silicon; macos-14 images retire on 2026-11-02
     env:
       # ONNX Runtime that ort 2.0.0-rc.12 binds against; keep in step with
       # scripts/build-macos.sh.
