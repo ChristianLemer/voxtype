@@ -7,7 +7,7 @@ use super::{get_voxtype_path, print_failure, print_info, print_success, print_wa
 use std::fs;
 use std::path::PathBuf;
 
-const PLIST_FILENAME: &str = "io.voxtype.daemon.plist";
+pub(crate) const PLIST_FILENAME: &str = "io.voxtype.daemon.plist";
 
 /// Get the path to the LaunchAgents directory
 fn launch_agents_dir() -> Option<PathBuf> {

@@ -71,6 +71,34 @@ fn plist_path() -> Result<PathBuf, AutostartError> {
         .ok_or(AutostartError::NoHome)
 }
 
+/// The agent `voxtype setup launchd` installs, [`super::launchd::PLIST_FILENAME`]:
+/// the daemon alone, from before autostart existed. Left beside ours it starts
+/// a second, grant-less daemon at login and shows up in Login Items as a dead
+/// `voxtype-bin` row that a user may switch off believing autostart is now
+/// disabled.
+/// Unload and delete the older agent, if any. Returns whether there was one.
+#[cfg(target_os = "macos")]
+fn retire_legacy_agent() -> Result<bool, AutostartError> {
+    let Some(path) = dirs::home_dir().map(|h| {
+        h.join("Library/LaunchAgents")
+            .join(super::launchd::PLIST_FILENAME)
+    }) else {
+        return Err(AutostartError::NoHome);
+    };
+    if !path.exists() {
+        return Ok(false);
+    }
+    let _ = std::process::Command::new("launchctl")
+        .args(["unload", &path.to_string_lossy()])
+        .output();
+    std::fs::remove_file(&path).map_err(|source| AutostartError::Io {
+        context: format!("removing {}", path.display()),
+        source,
+    })?;
+    tracing::info!("Removed the older LaunchAgent {}", path.display());
+    Ok(true)
+}
+
 /// `RunAtLoad` with no `KeepAlive`: `voxtype start` is a short-lived command
 /// that launches the app and exits, so launchd must not treat its exit as a
 /// crash and restart it forever.
@@ -100,6 +128,10 @@ fn plist(exe: &std::path::Path) -> String {
 #[cfg(target_os = "macos")]
 pub fn enable() -> Result<PathBuf, AutostartError> {
     let path = plist_path()?;
+    // Before loading ours: unloading the old agent stops the daemon it ran,
+    // so `voxtype start` below brings up the app rather than finding that
+    // daemon alive.
+    retire_legacy_agent()?;
     let exe = std::env::current_exe().map_err(|source| AutostartError::Io {
         context: "finding this executable".to_string(),
         source,
@@ -132,8 +164,9 @@ pub fn enable() -> Result<PathBuf, AutostartError> {
 #[cfg(target_os = "macos")]
 pub fn disable() -> Result<bool, AutostartError> {
     let path = plist_path()?;
+    let had_legacy = retire_legacy_agent()?;
     if !path.exists() {
-        return Ok(false);
+        return Ok(had_legacy);
     }
     let _ = std::process::Command::new("launchctl")
         .args(["unload", &path.to_string_lossy()])
