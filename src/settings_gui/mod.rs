@@ -89,6 +89,12 @@ fn open(
     let options = eframe::NativeOptions {
         viewport,
         renderer,
+        // By default eframe hands control back when the window closes, and
+        // a macOS app that has opened a window keeps running after it is
+        // closed: the settings process stayed alive. Exit with the window.
+        // Not on Windows, where a renderer that fails to start must return
+        // its error so the next one can be tried.
+        run_and_return: cfg!(not(target_os = "macos")),
         ..Default::default()
     };
     eframe::run_native(
