@@ -267,7 +267,7 @@ fn draw_waveform(
     let amp = (h * 0.45).max(1.0);
     let point = |i: usize| {
         let along = if n <= 1 { 0.0 } else { i as f32 / (n - 1) as f32 };
-        let envelope = (smoothed[i] * gain).clamp(0.015, 1.0);
+        let envelope = sensitive(smoothed[i] * gain).max(0.015);
         let ripple = (phase * 2.0 + along * std::f32::consts::PI * 3.0).sin() * 0.04;
         (x + along * w, envelope, ripple)
     };
@@ -313,6 +313,14 @@ fn draw_waveform(
             pixmap.stroke_path(&path, &paint(with_alpha(color, alpha)), &stroke, t, None);
         }
     }
+}
+
+/// Lift quiet and ordinary speech toward full height, as Omarchy's bars do
+/// (`easeOutCubic`), above a small gate that keeps background noise flat.
+fn sensitive(level: f32) -> f32 {
+    const GATE: f32 = 0.03;
+    let x = ((level - GATE) / (1.0 - GATE)).clamp(0.0, 1.0);
+    1.0 - (1.0 - x).powi(3)
 }
 
 fn with_alpha(mut color: Color, alpha: f32) -> Color {
