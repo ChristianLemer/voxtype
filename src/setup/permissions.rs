@@ -47,8 +47,9 @@ impl Report {
             return Some(
                 "Voxtype is listed as allowed but macOS is refusing it, which happens \
                  when the app was rebuilt: an ad hoc signature ties the grant to the \
-                 exact binary. Remove Voxtype from Privacy & Security and add it back, \
-                 or sign the app with a stable identity.",
+                 exact binary. Repair the permissions (Settings > Permissions, or \
+                 `voxtype permissions --reset`) so macOS asks again, or remove Voxtype \
+                 from Privacy & Security and add it back.",
             );
         }
         Some(
@@ -102,6 +103,87 @@ pub fn report() -> i32 {
         }
         Some(advice) => {
             println!("\nDictation cannot work. {}", advice);
+            1
+        }
+    }
+}
+
+/// The bundle identifier Voxtype.app is built with (see
+/// `scripts/build-macos-dmg.sh`), under which TCC records its grants.
+pub const BUNDLE_ID: &str = "io.voxtype.daemon";
+
+/// Input Monitoring and Accessibility, as `tccutil` names them.
+#[cfg(target_os = "macos")]
+const SERVICES: [&str; 2] = ["ListenEvent", "Accessibility"];
+
+/// Forget Voxtype's Input Monitoring and Accessibility grants.
+///
+/// The remedy for a grant macOS lists as on but refuses: rather than have the
+/// user find the stale row in System Settings, remove it so the next request
+/// starts from nothing. Nothing is granted here; call [`request`] from the
+/// app, or relaunch it, for macOS to ask again.
+///
+/// Errors name each service `tccutil` refused, with its message.
+#[cfg(target_os = "macos")]
+pub fn reset() -> Result<(), String> {
+    let failures: Vec<String> = SERVICES
+        .iter()
+        .filter_map(|service| {
+            match std::process::Command::new("tccutil")
+                .args(["reset", service, BUNDLE_ID])
+                .output()
+            {
+                Ok(out) if out.status.success() => None,
+                Ok(out) => Some(format!(
+                    "{service}: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )),
+                Err(e) => Some(format!("{service}: {e}")),
+            }
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// Ask macOS for both grants, showing its prompts where they are missing.
+///
+/// macOS attributes the request to the responsible app: Voxtype.app when
+/// called from a process it launched, but the terminal when run from one,
+/// which is why the CLI leaves asking to the app.
+#[cfg(target_os = "macos")]
+pub fn request() {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGRequestListenEventAccess() -> bool;
+        fn CGRequestPostEventAccess() -> bool;
+    }
+    unsafe {
+        CGRequestListenEventAccess();
+        CGRequestPostEventAccess();
+    }
+}
+
+/// `voxtype permissions --reset`: forget both grants and say what comes next.
+#[cfg(target_os = "macos")]
+pub fn reset_report() -> i32 {
+    match reset() {
+        Ok(()) => {
+            println!(
+                "Reset Input Monitoring and Accessibility for {BUNDLE_ID}.\n\
+                 Restart Voxtype (voxtype restart) and allow it when macOS asks."
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!(
+                "macOS did not reset the permissions: {e}\n\
+                 Remove Voxtype from Input Monitoring and from Accessibility in \
+                 System Settings > Privacy & Security, then add it back."
+            );
             1
         }
     }

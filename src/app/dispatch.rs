@@ -95,8 +95,13 @@ pub(crate) async fn dispatch(
         }
 
         #[cfg(target_os = "macos")]
-        Commands::Permissions => {
-            std::process::exit(voxtype::setup::permissions::report());
+        Commands::Permissions { reset } => {
+            let code = if reset {
+                voxtype::setup::permissions::reset_report()
+            } else {
+                voxtype::setup::permissions::report()
+            };
+            std::process::exit(code);
         }
 
         #[cfg(any(target_os = "macos", windows))]

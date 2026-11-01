@@ -18,6 +18,16 @@ const RECHECK: Duration = Duration::from_secs(2);
 #[derive(Default)]
 pub(super) struct State {
     checked: Option<(Instant, Report)>,
+    /// The repair button was pressed once and waits for a confirmation.
+    confirming: bool,
+    /// Why the last repair failed, kept on screen with the manual steps.
+    repair_failed: Option<String>,
+}
+
+enum Repair {
+    Ask,
+    Confirm,
+    Cancel,
 }
 
 struct Grant {
@@ -76,6 +86,7 @@ impl SettingsApp {
         );
         ui.add_space(10.0);
 
+        let mut repair: Option<Repair> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -117,14 +128,74 @@ impl SettingsApp {
                     ),
                     Some(advice) => ("Dictation cannot work yet", advice),
                 };
+                let confirming = self.permissions.confirming;
+                let failed = self.permissions.repair_failed.clone();
                 card(ui).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(title).strong());
                     ui.label(egui::RichText::new(text).weak());
+                    if report.usable() {
+                        ui.add_space(6.0);
+                        return;
+                    }
+                    ui.add_space(8.0);
+                    if confirming {
+                        ui.label(
+                            "This removes Voxtype from Input Monitoring and Accessibility, \
+                             then asks macOS for both again. Allow Voxtype when it asks.",
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.button("Repair").clicked() {
+                                repair = Some(Repair::Confirm);
+                            }
+                            if ui.button("Cancel").clicked() {
+                                repair = Some(Repair::Cancel);
+                            }
+                        });
+                    } else if ui.button("Repair permissions…").clicked() {
+                        repair = Some(Repair::Ask);
+                    }
+                    if let Some(e) = failed {
+                        ui.add_space(6.0);
+                        let red = ui.visuals().error_fg_color;
+                        ui.colored_label(red, format!("macOS did not reset the permissions: {e}"));
+                        ui.label(
+                            "Remove Voxtype with − under Input Monitoring and under \
+                             Accessibility, then add it back with +.",
+                        );
+                    }
                     ui.add_space(6.0);
                 });
             });
+
+        match repair {
+            Some(Repair::Ask) => self.permissions.confirming = true,
+            Some(Repair::Cancel) => self.permissions.confirming = false,
+            Some(Repair::Confirm) => {
+                self.permissions.confirming = false;
+                match permissions::reset() {
+                    Ok(()) => {
+                        self.permissions.repair_failed = None;
+                        permissions::request();
+                        // The daemon opened its event tap at startup; it
+                        // needs a restart to use the new grants.
+                        self.restart_pending = true;
+                        self.message = Some((
+                            false,
+                            "Permissions reset. Allow Voxtype when macOS asks, then restart it."
+                                .into(),
+                        ));
+                    }
+                    Err(e) => {
+                        self.permissions.repair_failed = Some(e);
+                        open_privacy_pane("Privacy_ListenEvent");
+                    }
+                }
+                self.permissions.checked = None;
+            }
+            None => {}
+        }
     }
 }
 

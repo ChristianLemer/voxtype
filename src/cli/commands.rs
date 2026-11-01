@@ -69,8 +69,16 @@ pub enum Commands {
         looks healthy and dictation silently does nothing.\n\n\
         The microphone is not reported: there is no way to read it without \
         prompting, and a guess would be worse than saying so.\n\n\
-        Exit codes: 0 when dictation can work, 1 when a grant is missing.")]
-    Permissions,
+        With --reset, the two grants are forgotten instead, so macOS asks \
+        again: the repair for a grant that is listed as on but refused. \
+        Restart Voxtype afterwards and allow it when prompted.\n\n\
+        Exit codes: 0 when dictation can work (or the reset succeeded), 1 when \
+        a grant is missing (or macOS refused the reset).")]
+    Permissions {
+        /// Forget the Input Monitoring and Accessibility grants so macOS asks again
+        #[arg(long)]
+        reset: bool,
+    },
 
     /// Show the recording card (started by the daemon on Windows and macOS)
     #[cfg(any(target_os = "macos", windows))]
