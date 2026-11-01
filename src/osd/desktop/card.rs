@@ -7,7 +7,7 @@
 
 use tiny_skia::{FillRule, LineCap, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-use crate::osd::visual::{peak_meter_fraction, Color, EnvelopeColumn, MeterZone, Palette};
+use crate::osd::visual::{peak_meter_fraction, Color, MeterZone, Palette};
 
 /// Room around the card for the glow, in logical pixels.
 pub const GLOW_PAD: f32 = 20.0;
@@ -50,7 +50,10 @@ pub struct Scene<'a> {
     /// Voice level 0..=1 driving the glow; 0 hides it.
     pub energy: f32,
     pub glow: bool,
-    pub envelope: &'a [EnvelopeColumn],
+    /// Smoothed level per waveform column, 0..=1 before gain.
+    pub wave: &'a [f32],
+    /// Seconds of animation, for the waveform's ripple.
+    pub phase: f32,
     pub waveform_gain: f32,
     pub peak_dbfs: f32,
     pub held_dbfs: f32,
@@ -64,9 +67,11 @@ pub fn pixel_size(width: f32, height: f32, scale: f32) -> (u32, u32) {
     )
 }
 
-/// Number of waveform columns for a card of this width.
+/// Number of waveform columns for a card of this width: one per 5 logical
+/// pixels, 24 to 96, as Omarchy's card draws it. Wide columns averaging a
+/// few frames each read as a pulse; one column per 10 ms frame read as steps.
 pub fn waveform_columns(width: f32) -> usize {
-    (width - 2.0 * PADDING - ICON_W - 10.0).max(32.0) as usize
+    (((width - 2.0 * PADDING - ICON_W - 10.0) / 5.0) as usize).clamp(24, 96)
 }
 
 fn paint(c: Color) -> Paint<'static> {
@@ -153,8 +158,9 @@ pub fn render(scene: &Scene, scale: f32) -> Option<Pixmap> {
         top,
         width,
         wave_h,
-        scene.envelope,
+        scene.wave,
         scene.waveform_gain,
+        scene.phase,
         scene.palette.accent,
     );
     draw_meter(
@@ -230,6 +236,10 @@ fn draw_microphone(pixmap: &mut Pixmap, t: Transform, cx: f32, cy: f32, color: C
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The waveform the way Omarchy's Quickshell card draws it: a mirrored
+/// envelope, each column averaged with its neighbours, a slow ripple so a
+/// quiet voice still breathes, a faint fill and a soft line along the top.
+#[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     pixmap: &mut Pixmap,
     t: Transform,
@@ -237,37 +247,77 @@ fn draw_waveform(
     y: f32,
     w: f32,
     h: f32,
-    envelope: &[EnvelopeColumn],
+    levels: &[f32],
     gain: f32,
+    phase: f32,
     color: Color,
 ) {
-    if envelope.is_empty() {
+    let n = levels.len();
+    if n == 0 {
         return;
     }
-    let n = envelope.len();
-    let col_w = w / n as f32;
-    let mid = y + h / 2.0;
-    let half = h / 2.0;
-    // Never thinner than a hairline, so silence still reads as a line.
-    let top = |c: &EnvelopeColumn| (mid - (c.max * gain).clamp(-1.0, 1.0) * half).min(mid - 0.6);
-    let bottom = |c: &EnvelopeColumn| (mid - (c.min * gain).clamp(-1.0, 1.0) * half).max(mid + 0.6);
+    let smoothed: Vec<f32> = (0..n)
+        .map(|i| {
+            let prev = levels[i.saturating_sub(1)];
+            let next = levels[(i + 1).min(n - 1)];
+            prev * 0.25 + levels[i] * 0.5 + next * 0.25
+        })
+        .collect();
+    let cy = y + h / 2.0;
+    let amp = (h * 0.45).max(1.0);
+    let point = |i: usize| {
+        let along = if n <= 1 { 0.0 } else { i as f32 / (n - 1) as f32 };
+        let envelope = (smoothed[i] * gain).clamp(0.015, 1.0);
+        let ripple = (phase * 2.0 + along * std::f32::consts::PI * 3.0).sin() * 0.04;
+        (x + along * w, envelope, ripple)
+    };
 
-    let mut pb = PathBuilder::new();
-    for (i, c) in envelope.iter().enumerate() {
-        let px = x + (i as f32 + 0.5) * col_w;
+    let mut fill = PathBuilder::new();
+    for i in 0..n {
+        let (px, envelope, ripple) = point(i);
+        let py = cy - (envelope + ripple) * amp;
         if i == 0 {
-            pb.move_to(px, top(c));
+            fill.move_to(px, py);
         } else {
-            pb.line_to(px, top(c));
+            fill.line_to(px, py);
         }
     }
-    for (i, c) in envelope.iter().enumerate().rev() {
-        pb.line_to(x + (i as f32 + 0.5) * col_w, bottom(c));
+    for i in (0..n).rev() {
+        let (px, envelope, ripple) = point(i);
+        fill.line_to(px, cy + (envelope - ripple) * amp);
     }
-    pb.close();
-    if let Some(path) = pb.finish() {
-        pixmap.fill_path(&path, &paint(color), FillRule::Winding, t, None);
+    fill.close();
+    if let Some(path) = fill.finish() {
+        pixmap.fill_path(&path, &paint(with_alpha(color, 0.18)), FillRule::Winding, t, None);
     }
+
+    let mut line = PathBuilder::new();
+    for i in 0..n {
+        let (px, envelope, _) = point(i);
+        let py = cy - envelope * amp;
+        if i == 0 {
+            line.move_to(px, py);
+        } else {
+            line.line_to(px, py);
+        }
+    }
+    if let Some(path) = line.finish() {
+        // Three passes, wide and faint to narrow and solid: a soft glow.
+        for (alpha, width) in [(0.75 * 0.25, 1.4 * 4.0), (0.75 * 0.55, 1.4 * 2.0), (0.75, 1.4)] {
+            let stroke = Stroke {
+                width,
+                line_cap: LineCap::Round,
+                line_join: tiny_skia::LineJoin::Round,
+                ..Stroke::default()
+            };
+            pixmap.stroke_path(&path, &paint(with_alpha(color, alpha)), &stroke, t, None);
+        }
+    }
+}
+
+fn with_alpha(mut color: Color, alpha: f32) -> Color {
+    color.a *= alpha;
+    color
 }
 
 fn draw_meter(pixmap: &mut Pixmap, t: Transform, x: f32, y: f32, w: f32, h: f32, scene: &Scene) {
@@ -311,13 +361,7 @@ mod tests {
     #[test]
     fn renders_a_card_with_transparent_corners_and_opaque_body() {
         let palette = Palette::fallback();
-        let envelope = vec![
-            EnvelopeColumn {
-                min: -0.05,
-                max: 0.05
-            };
-            waveform_columns(400.0)
-        ];
+        let wave = vec![0.05; waveform_columns(400.0)];
         let scene = Scene {
             width: 400.0,
             height: 48.0,
@@ -326,7 +370,8 @@ mod tests {
             opacity: 0.95,
             energy: 0.5,
             glow: true,
-            envelope: &envelope,
+            wave: &wave,
+            phase: 0.0,
             waveform_gain: 10.0,
             peak_dbfs: -20.0,
             held_dbfs: -12.0,

@@ -28,7 +28,7 @@ use crate::audio::levels::{AudioFrame, FRAME_HZ};
 use crate::osd::config::OsdConfig;
 use crate::osd::ipc::{resolve_socket_path, run_ipc_loop, FrameRing};
 use crate::osd::theme::load_palette;
-use crate::osd::visual::{peak_meter_fraction, project_envelope, Color, Palette, PeakHold};
+use crate::osd::visual::{peak_meter_fraction, Color, Palette, PeakHold};
 
 /// How often the state file is re-read.
 pub const STATE_POLL: Duration = Duration::from_millis(80);
@@ -75,6 +75,43 @@ pub struct Model {
     state: String,
     state_read_at: Instant,
     energy: f32,
+    /// Smoothed waveform level per column, 0..=1 before gain.
+    wave: Vec<f32>,
+    /// Seconds of animation, driving the waveform's ripple.
+    phase: f32,
+    rendered_at: Instant,
+}
+
+/// How fast a waveform column climbs to a louder level and falls back, per
+/// second. The values of Omarchy's Quickshell card (`RecipeRenderer.qml`):
+/// quick to rise, slower to fall, so the trace pulses with the voice instead
+/// of jumping between 10 ms blocks.
+const WAVE_RISE: f32 = 30.0;
+const WAVE_FALL: f32 = 14.0;
+
+/// Exponential approach of `current` toward `target`.
+fn approach(current: f32, target: f32, stiffness: f32, dt: f32) -> f32 {
+    current + (target - current) * (1.0 - (-stiffness.max(0.01) * dt).exp())
+}
+
+/// Average peak of the frames under each of `columns` columns, the newest
+/// frame at the right edge and the window's left part silent while history
+/// is still filling.
+fn column_targets(peaks: &[f32], columns: usize, window_frames: usize) -> Vec<f32> {
+    let capacity = peaks.len().max(window_frames).max(1);
+    let pad = capacity - peaks.len();
+    (0..columns)
+        .map(|i| {
+            let start = (i * capacity / columns).saturating_sub(pad);
+            let end = (((i + 1) * capacity / columns).saturating_sub(pad)).max(start + 1);
+            let bucket = &peaks[start.min(peaks.len())..end.min(peaks.len())];
+            if bucket.is_empty() {
+                0.0
+            } else {
+                bucket.iter().sum::<f32>() / bucket.len() as f32
+            }
+        })
+        .collect()
 }
 
 impl Model {
@@ -111,22 +148,32 @@ impl Model {
     /// Draw the current frame at `scale` physical pixels per logical pixel.
     pub fn render(&mut self, scale: f32) -> Option<tiny_skia::Pixmap> {
         let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.rendered_at)
+            .as_secs_f32()
+            .min(0.1);
+        self.rendered_at = now;
+        self.phase += dt;
         let width = self.config.width_px as f32;
         let height = self.config.height_px as f32;
-        let (envelope, peak_dbfs) = {
+        let columns = card::waveform_columns(width);
+        let (targets, peak_dbfs) = {
             let ring = self.feed.ring.lock().unwrap();
-            let frames: Vec<AudioFrame> = ring.iter().collect();
-            let envelope = project_envelope(
-                &frames,
-                card::waveform_columns(width),
-                self.config.waveform_window_secs as f64 * FRAME_HZ as f64,
-                ring.scroll_offset(now),
-            );
+            let peaks: Vec<f32> = ring
+                .iter()
+                .map(|f: AudioFrame| f.min.abs().max(f.max.abs()).min(1.0))
+                .collect();
+            let window = (self.config.waveform_window_secs * FRAME_HZ as f32) as usize;
             (
-                envelope,
+                column_targets(&peaks, columns, window),
                 ring.latest().map(|f| f.peak_dbfs).unwrap_or(-120.0),
             )
         };
+        self.wave.resize(columns, 0.0);
+        for (level, target) in self.wave.iter_mut().zip(targets) {
+            let stiffness = if target > *level { WAVE_RISE } else { WAVE_FALL };
+            *level = approach(*level, target, stiffness, dt);
+        }
         let held_dbfs = self.feed.peak_hold.lock().unwrap().held_dbfs;
 
         let recording = self.state == "recording";
@@ -148,7 +195,8 @@ impl Model {
                 opacity: self.config.opacity,
                 energy: self.energy,
                 glow: recording,
-                envelope: &envelope,
+                wave: &self.wave,
+                phase: self.phase,
                 waveform_gain: self.config.waveform_gain,
                 peak_dbfs,
                 held_dbfs,
@@ -206,6 +254,9 @@ pub fn run(config: Option<&std::path::Path>) -> anyhow::Result<()> {
         state: String::new(),
         state_read_at: Instant::now() - STATE_POLL,
         energy: 0.0,
+        wave: Vec::new(),
+        phase: 0.0,
+        rendered_at: Instant::now(),
     };
 
     #[cfg(windows)]
