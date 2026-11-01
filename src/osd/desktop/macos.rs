@@ -188,6 +188,13 @@ pub fn run(model: Model) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Glow,
+        // A macOS app keeps running once its window is gone, so by default a
+        // card whose window closed (orphaned, or lost across a restart) lived
+        // on with no window, and the daemon's supervisor, seeing its child
+        // alive, never started another: the card silently disappeared until
+        // the app was relaunched. Exit with the window so the supervisor
+        // respawns it.
+        run_and_return: false,
         ..Default::default()
     };
     eframe::run_native(
