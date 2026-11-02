@@ -87,6 +87,11 @@ impl SettingsApp {
             return;
         };
         let reading = self.permissions.reading.is_some();
+        let marker = permissions::reset_marker();
+        let just_reset = marker.exists();
+        if just_reset && report.usable() {
+            let _ = std::fs::remove_file(&marker);
+        }
 
         let grants = [
             Grant {
@@ -141,6 +146,22 @@ impl SettingsApp {
             .weak(),
         );
         ui.add_space(10.0);
+        if just_reset && !report.usable() {
+            card(ui).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Voxtype was just updated").strong());
+                ui.label(
+                    egui::RichText::new(
+                        "macOS ties these permissions to the exact build, so Voxtype cleared \
+                         them and macOS asks again. Open Settings below, switch Voxtype on, then restart it.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(6.0);
+            });
+            ui.add_space(10.0);
+        }
 
         let mut repair: Option<Repair> = None;
         egui::ScrollArea::vertical()

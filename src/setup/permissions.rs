@@ -204,11 +204,21 @@ pub fn heal_at_launch() -> Report {
         refused.extend(SERVICES);
     }
     match reset_services(&refused) {
-        Ok(()) => tracing::info!("Reset refused permissions {refused:?} so macOS asks again"),
+        Ok(()) => {
+            tracing::info!("Reset refused permissions {refused:?} so macOS asks again");
+            let _ = std::fs::write(reset_marker(), "");
+        }
         Err(e) => tracing::warn!("Could not reset refused permissions: {e}"),
     }
     request();
     report
+}
+
+/// Left by [`heal_at_launch`] when it reset grants, so the Permissions pane
+/// can say why Voxtype is suddenly not allowed; removed once it is again.
+#[cfg(target_os = "macos")]
+pub fn reset_marker() -> std::path::PathBuf {
+    crate::config::Config::runtime_dir().join("permissions-reset")
 }
 
 /// `voxtype permissions --json`: the report as one JSON object, for the
