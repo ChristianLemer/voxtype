@@ -552,22 +552,27 @@ fn restart_daemon() {
     voxtype_cmd(&["daemon"]);
 }
 
-/// Restart the daemon
+/// Restart Voxtype: the app, this menu, the daemon and the recording card.
+///
+/// Handed to a separate `voxtype restart`, the path that stops every voxtype
+/// process and reopens Voxtype.app through LaunchServices. Run from this
+/// process it could not work: it stops the app, which is this menu, and
+/// reopening an app that is still running only activates it. The child
+/// outlives the menu it was started from.
+///
+/// This replaces a restart that did nothing on macOS: it kickstarted the
+/// legacy `io.voxtype.daemon` agent with an unexpanded `$(id -u)`, and its
+/// `pkill -f "voxtype daemon"` never matched the `voxtype-bin daemon` process.
 #[cfg(target_os = "macos")]
 fn restart_daemon() {
-    // Try launchctl first
-    let _ = std::process::Command::new("launchctl")
-        .args(["kickstart", "-k", "gui/$(id -u)/io.voxtype.daemon"])
-        .status();
-
-    // Fallback: kill and restart
-    let _ = std::process::Command::new("pkill")
-        .args(["-f", "voxtype daemon"])
-        .status();
-
-    std::thread::sleep(Duration::from_millis(500));
-
-    voxtype_cmd(&["daemon"]);
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe)
+            .arg("restart")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
 }
 
 /// Show notification
@@ -750,7 +755,12 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
 
     // Utilities
     let config_item = MenuItem::with_id(menu_ids::OPEN_CONFIG, "Edit Config File...", true, None);
-    let restart_item = MenuItem::with_id(menu_ids::RESTART_DAEMON, "Restart Daemon", true, None);
+    // On macOS it restarts the whole app, menu included.
+    #[cfg(target_os = "macos")]
+    let restart_label = "Restart Voxtype";
+    #[cfg(windows)]
+    let restart_label = "Restart Daemon";
+    let restart_item = MenuItem::with_id(menu_ids::RESTART_DAEMON, restart_label, true, None);
 
     #[cfg(any(windows, feature = "settings-gui"))]
     let has_settings = true;
