@@ -74,8 +74,13 @@ pub fn start() -> Result<Started, StartError> {
     if crate::daemon_status::is_daemon_running() {
         return Ok(Started::AlreadyRunning);
     }
+    launch_and_wait(false)
+}
 
-    let path = launch()?;
+/// Launch, then wait for the daemon to claim its pidfile. `fresh` asks for a
+/// new instance of the app even if macOS still counts one as running.
+fn launch_and_wait(fresh: bool) -> Result<Started, StartError> {
+    let path = launch(fresh)?;
 
     let deadline = std::time::Instant::now() + WAIT;
     while std::time::Instant::now() < deadline {
@@ -113,7 +118,7 @@ fn containing_bundle() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn launch() -> Result<PathBuf, StartError> {
+fn launch(fresh: bool) -> Result<PathBuf, StartError> {
     let bundle = match containing_bundle() {
         Some(here) => here,
         None => crate::setup::app_bundle::app_bundle_path(),
@@ -125,8 +130,15 @@ fn launch() -> Result<PathBuf, StartError> {
     // `open` rather than running the executable: it goes through
     // LaunchServices, which is what attributes the daemon to Voxtype.app and
     // so hands it the bundle's microphone and Accessibility grants.
-    std::process::Command::new("open")
-        .arg(&bundle)
+    //
+    // `-n` on a restart: any process of the bundle, a settings window
+    // included, registers as Voxtype.app, and plain `open` would then only
+    // activate it and start no daemon.
+    let mut open = std::process::Command::new("open");
+    if fresh {
+        open.arg("-n");
+    }
+    open.arg(&bundle)
         .status()
         .map_err(|source| StartError::Launch {
             path: bundle.clone(),
@@ -142,7 +154,7 @@ fn launch() -> Result<PathBuf, StartError> {
 /// makes `voxtype start` mean the same thing on either system, and gives
 /// `autostart` a single thing to register.
 #[cfg(windows)]
-fn launch() -> Result<PathBuf, StartError> {
+fn launch(_fresh: bool) -> Result<PathBuf, StartError> {
     let exe = std::env::current_exe().map_err(|source| StartError::Launch {
         path: PathBuf::from("voxtype.exe"),
         source,
@@ -263,7 +275,7 @@ fn stop_passing_on_our_std_handles() {
 /// nothing if it is up". Keeping this off Linux avoids a second, competing
 /// notion of how the daemon comes up.
 #[cfg(not(any(target_os = "macos", windows)))]
-fn launch() -> Result<PathBuf, StartError> {
+fn launch(_fresh: bool) -> Result<PathBuf, StartError> {
     Err(StartError::NoBundle)
 }
 
@@ -293,8 +305,14 @@ pub fn restart() -> Result<Started, StartError> {
     let runtime = crate::config::Config::runtime_dir();
     let _ = std::fs::remove_file(runtime.join("voxtype.lock"));
     let _ = std::fs::remove_file(runtime.join("menubar.lock"));
-    start()
+    launch_and_wait(true)
 }
+
+/// The subcommands whose processes a restart stops on macOS. `settings` is
+/// there because a settings window registers as Voxtype.app: left running,
+/// it made the relaunch only activate it, and no daemon came back.
+#[cfg(target_os = "macos")]
+const STOP_ROLES: [&str; 4] = ["daemon", "menubar", "osd-card", "settings"];
 
 /// The command lines of every voxtype process to stop on macOS. The bare
 /// bundle executable is the app's main process — menu bar and launcher — and
@@ -316,7 +334,7 @@ fn pids_to_stop() -> Vec<u32> {
         }
     };
     collect(&["-fx", &exe]);
-    for role in ["daemon", "menubar", "osd-card"] {
+    for role in STOP_ROLES {
         collect(&["-f", &format!("voxtype-bin {role}")]);
     }
 
@@ -373,6 +391,16 @@ fn stop_all() {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn stop_all() {}
+
+#[cfg(all(test, target_os = "macos"))]
+mod stop_role_tests {
+    /// A settings window registers as Voxtype.app; a restart that leaves one
+    /// running only reactivates it and never brings the daemon back (#6).
+    #[test]
+    fn a_restart_stops_settings_windows() {
+        assert!(super::STOP_ROLES.contains(&"settings"));
+    }
+}
 
 #[cfg(test)]
 mod tests {

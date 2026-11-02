@@ -284,6 +284,10 @@ impl SettingsApp {
                         Ok(()) => {
                             self.restart_pending = false;
                             self.message = Some((false, "Voxtype restarted".into()));
+                            // The restart stops this window too; close it
+                            // rather than be killed mid-frame.
+                            #[cfg(target_os = "macos")]
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         Err(e) => self.message = Some((true, e)),
                     }
@@ -724,7 +728,24 @@ fn fetch_choices(source: &str) -> Vec<Choice> {
     }
 }
 
-#[cfg(any(target_os = "macos", windows))]
+/// Hand the restart to a separate `voxtype restart` and let this window
+/// close: the restart stops every voxtype process, settings windows
+/// included, since one left running counts as Voxtype.app and would keep the
+/// app from starting again (#6).
+#[cfg(target_os = "macos")]
+fn restart_daemon() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe)
+        .arg("restart")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
 fn restart_daemon() -> Result<(), String> {
     crate::setup::start::restart()
         .map(|_| ())
