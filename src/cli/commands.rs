@@ -78,6 +78,10 @@ pub enum Commands {
         /// Forget the Input Monitoring and Accessibility grants so macOS asks again
         #[arg(long)]
         reset: bool,
+
+        /// Print the report as one JSON object
+        #[arg(long, conflicts_with = "reset")]
+        json: bool,
     },
 
     /// Show the recording card (started by the daemon on Windows and macOS)

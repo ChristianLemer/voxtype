@@ -211,6 +211,52 @@ pub fn heal_at_launch() -> Report {
     report
 }
 
+/// `voxtype permissions --json`: the report as one JSON object, for the
+/// settings window, which reads it from a fresh process (see [`check_fresh`]).
+#[cfg(target_os = "macos")]
+pub fn json_report() -> i32 {
+    let r = check();
+    println!(
+        "{}",
+        serde_json::json!({
+            "input_monitoring": r.listen_event,
+            "accessibility": r.post_event,
+            "event_tap": r.event_tap_works,
+            "usable": r.usable(),
+        })
+    );
+    if r.usable() {
+        0
+    } else {
+        1
+    }
+}
+
+/// Read the grants from a new `voxtype permissions --json` process.
+///
+/// A process tends to keep the answer macOS gave it the first time, notably
+/// for Input Monitoring, so a long-running window that re-reads in-process
+/// can keep showing "Not allowed" after the switch was turned on. A fresh
+/// process asks afresh. Launched from the settings window, it belongs to
+/// Voxtype.app, so it reads the app's grants.
+#[cfg(target_os = "macos")]
+pub fn check_fresh() -> Option<Report> {
+    let exe = std::env::current_exe().ok()?;
+    let out = std::process::Command::new(exe)
+        .args(["permissions", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let flag = |k: &str| doc.get(k).and_then(serde_json::Value::as_bool);
+    Some(Report {
+        listen_event: flag("input_monitoring")?,
+        post_event: flag("accessibility")?,
+        event_tap_works: flag("event_tap")?,
+    })
+}
+
 /// `voxtype permissions --reset`: forget both grants and say what comes next.
 #[cfg(target_os = "macos")]
 pub fn reset_report() -> i32 {

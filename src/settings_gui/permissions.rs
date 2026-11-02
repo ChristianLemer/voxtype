@@ -1,11 +1,15 @@
 //! The Permissions pane (macOS): what dictation needs from System Settings.
 //!
-//! Read through [`crate::setup::permissions::check`], the same preflight calls
-//! behind `voxtype permissions`, which never prompt. The window runs as a
-//! child of Voxtype.app, so it sees the app's grants. It re-reads them every
-//! few seconds while the pane is open, so a switch turned on in System
-//! Settings shows up here without a click.
+//! Read by `voxtype permissions --json` in a fresh process each time
+//! ([`crate::setup::permissions::check_fresh`]): a process keeps the answer
+//! macOS first gave it, so re-reading in this long-lived window could show
+//! "Not allowed" after the switch was turned on. The window runs as a child
+//! of Voxtype.app, so those processes read the app's grants. The pane
+//! re-reads every few seconds while open, and Refresh reads at once; the
+//! time of the last reading is shown so a stale state cannot pass for a
+//! fresh one.
 
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -13,11 +17,14 @@ use eframe::egui;
 use super::{card, SettingsApp};
 use crate::setup::permissions::{self, Report};
 
-const RECHECK: Duration = Duration::from_secs(2);
+const RECHECK: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 pub(super) struct State {
-    checked: Option<(Instant, Report)>,
+    /// When the last reading finished, what it said, and its wall-clock time.
+    checked: Option<(Instant, Report, String)>,
+    /// A reading in progress, in a background thread.
+    reading: Option<mpsc::Receiver<Report>>,
     /// The repair button was pressed once and waits for a confirmation.
     confirming: bool,
     /// Why the last repair failed, kept on screen with the manual steps.
@@ -40,18 +47,46 @@ struct Grant {
 }
 
 impl SettingsApp {
+    /// Start a reading in a fresh process, unless one is already running.
+    fn read_permissions(&mut self, ctx: &egui::Context) {
+        if self.permissions.reading.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let report = permissions::check_fresh().unwrap_or_else(permissions::check);
+            let _ = tx.send(report);
+            ctx.request_repaint();
+        });
+        self.permissions.reading = Some(rx);
+    }
+
     pub(super) fn permissions_pane(&mut self, ui: &mut egui::Ui) {
-        let stale = self
+        if let Some(rx) = &self.permissions.reading {
+            if let Ok(report) = rx.try_recv() {
+                let at = chrono::Local::now().format("%H:%M:%S").to_string();
+                self.permissions.checked = Some((Instant::now(), report, at));
+                self.permissions.reading = None;
+            }
+        }
+        let due = self
             .permissions
             .checked
-            .is_none_or(|(at, _)| at.elapsed() >= RECHECK);
-        if stale {
-            self.permissions.checked = Some((Instant::now(), permissions::check()));
+            .as_ref()
+            .is_none_or(|(at, _, _)| at.elapsed() >= RECHECK);
+        if due {
+            self.read_permissions(ui.ctx());
         }
         ui.ctx().request_repaint_after(RECHECK);
-        let Some((_, report)) = self.permissions.checked else {
+        let Some((_, report, checked_at)) = self.permissions.checked.clone() else {
+            ui.add_space(14.0);
+            ui.heading(egui::RichText::new("Permissions").strong());
+            ui.add_space(10.0);
+            ui.weak("Reading what macOS allows…");
             return;
         };
+        let reading = self.permissions.reading.is_some();
 
         let grants = [
             Grant {
@@ -75,7 +110,28 @@ impl SettingsApp {
         ];
 
         ui.add_space(14.0);
-        ui.heading(egui::RichText::new("Permissions").strong());
+        let mut refresh = false;
+        ui.horizontal(|ui| {
+            ui.heading(egui::RichText::new("Permissions").strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(16.0);
+                if ui
+                    .add_enabled(!reading, egui::Button::new("Refresh"))
+                    .clicked()
+                {
+                    refresh = true;
+                }
+                let status = if reading {
+                    "Checking…".to_string()
+                } else {
+                    format!("Checked at {checked_at}")
+                };
+                ui.weak(status);
+            });
+        });
+        if refresh {
+            self.read_permissions(ui.ctx());
+        }
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
@@ -193,6 +249,7 @@ impl SettingsApp {
                     }
                 }
                 self.permissions.checked = None;
+                self.read_permissions(ui.ctx());
             }
             None => {}
         }

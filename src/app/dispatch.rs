@@ -95,9 +95,11 @@ pub(crate) async fn dispatch(
         }
 
         #[cfg(target_os = "macos")]
-        Commands::Permissions { reset } => {
+        Commands::Permissions { reset, json } => {
             let code = if reset {
                 voxtype::setup::permissions::reset_report()
+            } else if json {
+                voxtype::setup::permissions::json_report()
             } else {
                 voxtype::setup::permissions::report()
             };
