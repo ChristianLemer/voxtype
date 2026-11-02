@@ -180,6 +180,22 @@ pub(crate) async fn dispatch(
             // First-launch auto-setup: create config and download model if needed
             super::macos::first_launch_setup(&config).await;
 
+            // An update can leave a grant that System Settings shows as on
+            // but macOS refuses. Clear refused grants and ask again, then
+            // open the Permissions pane, which tracks the switches and
+            // offers the restart the daemon needs to use them.
+            let permissions = voxtype::setup::permissions::heal_at_launch();
+            #[cfg(feature = "settings-gui")]
+            if !permissions.usable() {
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = std::process::Command::new(exe)
+                        .args(["settings", "--section", "Permissions"])
+                        .spawn();
+                }
+            }
+            #[cfg(not(feature = "settings-gui"))]
+            let _ = permissions;
+
             // Kill any existing instances. The recording card is swept too:
             // a card left behind by a crashed daemon is a live process from
             // this bundle, which keeps macOS counting Voxtype.app as running,

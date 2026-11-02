@@ -126,7 +126,12 @@ const SERVICES: [&str; 2] = ["ListenEvent", "Accessibility"];
 /// Errors name each service `tccutil` refused, with its message.
 #[cfg(target_os = "macos")]
 pub fn reset() -> Result<(), String> {
-    let failures: Vec<String> = SERVICES
+    reset_services(&SERVICES)
+}
+
+#[cfg(target_os = "macos")]
+fn reset_services(services: &[&str]) -> Result<(), String> {
+    let failures: Vec<String> = services
         .iter()
         .filter_map(|service| {
             match std::process::Command::new("tccutil")
@@ -165,6 +170,45 @@ pub fn request() {
         CGRequestListenEventAccess();
         CGRequestPostEventAccess();
     }
+}
+
+/// Run when Voxtype.app starts: for each grant macOS refuses, forget it and
+/// ask again, so that no stale entry is left to puzzle over.
+///
+/// macOS reports a stale grant (one given to an earlier build of this ad hoc
+/// signed app) exactly like a grant never given, while System Settings keeps
+/// showing it switched on. The user then cannot fix it by switching it on,
+/// and the only manual remedy is removing the entry and adding it back.
+/// Resetting a grant that does not work loses nothing, so it is done for
+/// every refused grant without trying to tell the two cases apart. Grants
+/// that work are left alone.
+///
+/// Returns the report read before acting, so the caller can tell whether
+/// dictation can work.
+#[cfg(target_os = "macos")]
+pub fn heal_at_launch() -> Report {
+    let report = check();
+    if report.usable() {
+        return report;
+    }
+    let mut refused: Vec<&str> = Vec::new();
+    if !report.listen_event {
+        refused.push("ListenEvent");
+    }
+    if !report.post_event {
+        refused.push("Accessibility");
+    }
+    if refused.is_empty() {
+        // Both granted on paper, yet the event tap is refused: the grants
+        // belong to an earlier build.
+        refused.extend(SERVICES);
+    }
+    match reset_services(&refused) {
+        Ok(()) => tracing::info!("Reset refused permissions {refused:?} so macOS asks again"),
+        Err(e) => tracing::warn!("Could not reset refused permissions: {e}"),
+    }
+    request();
+    report
 }
 
 /// `voxtype permissions --reset`: forget both grants and say what comes next.
