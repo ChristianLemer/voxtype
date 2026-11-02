@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde_json::Value as Json;
 
+mod about;
 mod models;
 #[cfg(target_os = "macos")]
 mod permissions;
@@ -129,12 +130,14 @@ struct SettingsApp {
 const MODELS: &str = "Models";
 #[cfg(target_os = "macos")]
 const PERMISSIONS: &str = "Permissions";
+const ABOUT: &str = "About";
 
 /// Panes besides the schema's sections.
 const EXTRA_PANES: &[&str] = &[
     MODELS,
     #[cfg(target_os = "macos")]
     PERMISSIONS,
+    ABOUT,
 ];
 
 struct Choice {
@@ -252,6 +255,7 @@ impl SettingsApp {
         }
         #[cfg(target_os = "macos")]
         entries.push(PERMISSIONS);
+        entries.push(ABOUT);
         for section in entries {
             let selected = self.search.is_empty() && self.section == section;
             let text = format!("{}   {}", section_icon(section), section);
@@ -306,6 +310,9 @@ impl SettingsApp {
         #[cfg(target_os = "macos")]
         if !searching && self.section == PERMISSIONS {
             return self.permissions_pane(ui);
+        }
+        if !searching && self.section == ABOUT {
+            return self.about_pane(ui);
         }
         let (title, keys) = if searching {
             let search = self.search.clone();
@@ -644,6 +651,7 @@ fn section_icon(section: &str) -> &'static str {
         "Status" => "📊",
         "Models" => "📦",
         "Permissions" => "🔒",
+        "About" => "ℹ",
         _ => "🔧",
     }
 }

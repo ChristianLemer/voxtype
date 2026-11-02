@@ -196,6 +196,10 @@ mod menu_ids {
     pub const VIEW_LOGS: &str = "view_logs";
     pub const RESTART_DAEMON: &str = "restart_daemon";
     pub const SETTINGS: &str = "settings";
+    #[cfg(feature = "settings-gui")]
+    pub const ABOUT: &str = "about";
+    #[cfg(all(target_os = "macos", feature = "settings-gui"))]
+    pub const PERMISSIONS: &str = "permissions";
 
     // Auto-start
     #[cfg(target_os = "macos")]
@@ -756,6 +760,13 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
         let settings_item = MenuItem::with_id(menu_ids::SETTINGS, "Settings...", true, None);
         menu.append(&settings_item).unwrap();
     }
+    // Straight to the pane with Repair permissions, the one macOS users need
+    // after an update broke dictation.
+    #[cfg(all(target_os = "macos", feature = "settings-gui"))]
+    {
+        let item = MenuItem::with_id(menu_ids::PERMISSIONS, "Permissions...", true, None);
+        menu.append(&item).unwrap();
+    }
     menu.append(&config_item).unwrap();
     #[cfg(target_os = "macos")]
     {
@@ -765,6 +776,13 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
     menu.append(&restart_item).unwrap();
 
     menu.append(&PredefinedMenuItem::separator()).unwrap();
+
+    #[cfg(feature = "settings-gui")]
+    {
+        let about = format!("About Voxtype {}", crate::cli::VERSION);
+        let item = MenuItem::with_id(menu_ids::ABOUT, about, true, None);
+        menu.append(&item).unwrap();
+    }
 
     // Quit
     let quit_item = MenuItem::with_id(menu_ids::QUIT, "Quit Menu Bar", true, None);
@@ -961,6 +979,10 @@ pub fn run(state_file: PathBuf) -> ! {
                 menu_ids::DOWNLOAD_MODEL => open_settings_window(Some("Models")),
                 #[cfg(feature = "settings-gui")]
                 menu_ids::SETTINGS => open_settings_window(None),
+                #[cfg(feature = "settings-gui")]
+                menu_ids::ABOUT => open_settings_window(Some("About")),
+                #[cfg(all(target_os = "macos", feature = "settings-gui"))]
+                menu_ids::PERMISSIONS => open_settings_window(Some("Permissions")),
                 #[cfg(all(windows, not(feature = "settings-gui")))]
                 menu_ids::DOWNLOAD_MODEL => open_console(&["setup", "model"]),
                 #[cfg(all(windows, not(feature = "settings-gui")))]
