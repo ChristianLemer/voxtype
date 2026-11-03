@@ -208,3 +208,29 @@ jobs:
         with:
           name: voxtype-linux-x86_64
           path: target/release/voxtype
+
+  # Tests the macOS app on a real Mac: a self-hosted runner in a macOS VM on
+  # the maintainer's Mac (labels below). Hosted runners cannot do this, and
+  # neither can a VM on non-Apple hardware. It only runs for release tags and
+  # by hand, never for pull requests: a self-hosted runner on a public
+  # repository must not run code from strangers. If the Mac is off, the job
+  # waits for it; the build jobs above are not held up.
+  smoke-macos:
+    needs: macos
+    # Off until the runner exists: set the repository variable SMOKE_MACOS to
+    # "on" once it is registered, or every run would wait a day for it.
+    if: vars.SMOKE_MACOS == 'on' && (startsWith(github.ref, 'refs/tags/desktop-') || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, macOS, ARM64, voxtype-smoke]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: voxtype-macos-aarch64-app-zip
+
+      - name: Smoke test Voxtype.app
+        run: |
+          tag=""
+          case "$GITHUB_REF" in refs/tags/desktop-*) tag="${GITHUB_REF#refs/tags/}" ;; esac
+          scripts/smoke-macos.sh Voxtype-macos-arm64.app.zip "$tag"
