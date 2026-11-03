@@ -361,6 +361,10 @@ fn open_settings_window(section: Option<&str>) {
     };
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("settings");
+    // On macOS the window then closes with the app: a settings window that
+    // outlives it counts as Voxtype.app and keeps the app from reopening.
+    #[cfg(target_os = "macos")]
+    cmd.env("VOXTYPE_APP_PID", std::process::id().to_string());
     if let Some(section) = section {
         cmd.args(["--section", section]);
     }

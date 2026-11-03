@@ -90,7 +90,14 @@ impl SettingsApp {
         let marker = permissions::reset_marker();
         let just_reset = marker.exists();
         if just_reset && report.usable() {
+            // Granted again after the launch-time repair: the daemon opened
+            // its event tap before, and needs a restart to use the grants.
             let _ = std::fs::remove_file(&marker);
+            self.restart_pending = true;
+            self.message = Some((
+                false,
+                "Permissions granted. Restart Voxtype to use them.".into(),
+            ));
         }
 
         let grants = [

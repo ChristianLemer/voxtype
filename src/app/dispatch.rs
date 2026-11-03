@@ -73,11 +73,15 @@ pub(crate) async fn dispatch(
     // Run the appropriate command
     match cli.command.unwrap_or(default_command) {
         Commands::Daemon => {
+            #[cfg(target_os = "macos")]
+            super::macos::exit_with_app();
             let mut daemon = daemon::Daemon::new(config, config_path);
             daemon.run().await?;
         }
         #[cfg(feature = "settings-gui")]
         Commands::Settings { section } => {
+            #[cfg(target_os = "macos")]
+            super::macos::exit_with_app();
             let path = super::config_set::resolve_config_path_for_write(cli.config.clone())?;
             voxtype::settings_gui::run(path, section)?;
         }
@@ -192,6 +196,7 @@ pub(crate) async fn dispatch(
                 if let Ok(exe) = std::env::current_exe() {
                     let _ = std::process::Command::new(exe)
                         .args(["settings", "--section", "Permissions"])
+                        .env(super::macos::APP_PID_VAR, std::process::id().to_string())
                         .spawn();
                 }
             }
@@ -221,6 +226,7 @@ pub(crate) async fn dispatch(
             let stderr = std::fs::File::create(logs_dir.join("stderr.log"))?;
             let _daemon = std::process::Command::new(&exe)
                 .arg("daemon")
+                .env(super::macos::APP_PID_VAR, std::process::id().to_string())
                 .stdout(stdout)
                 .stderr(stderr)
                 .spawn()?;

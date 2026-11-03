@@ -113,3 +113,41 @@ pub(crate) async fn first_launch_setup(_config: &config::Config) {
         }
     }
 }
+
+/// Set on the daemon Voxtype.app starts: the pid of the app.
+pub(crate) const APP_PID_VAR: &str = "VOXTYPE_APP_PID";
+
+/// Stop this process (the daemon, or a settings window) when the app that
+/// started it is gone.
+///
+/// When Input Monitoring is switched on, macOS offers to quit and reopen the
+/// app. It quits the app's main process, the menu bar, and the daemon it
+/// started lived on, orphaned. macOS then counts that daemon as Voxtype.app
+/// still running, so the reopen did nothing, and neither did `open -a`: the
+/// user was left with dictation but no menu bar (#7). With the daemon gone
+/// as soon as its app is, the reopen starts a whole new app.
+///
+/// A settings window the app opened has the same property and goes the same
+/// way. Only for processes the app started (`VOXTYPE_APP_PID` set): a
+/// daemon run from a terminal or a LaunchAgent keeps running on its own.
+pub(crate) fn exit_with_app() {
+    let Some(app) = std::env::var(APP_PID_VAR)
+        .ok()
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return;
+    };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if std::os::unix::process::parent_id() != app {
+            tracing::info!("Voxtype.app (pid {app}) is gone; stopping");
+            // The daemon's own SIGTERM handling shuts it down cleanly;
+            // exit regardless if that takes too long.
+            unsafe {
+                libc::kill(std::process::id() as libc::pid_t, libc::SIGTERM);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            std::process::exit(0);
+        }
+    });
+}
