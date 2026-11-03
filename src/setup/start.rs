@@ -320,7 +320,12 @@ const STOP_ROLES: [&str; 4] = ["daemon", "menubar", "osd-card", "settings"];
 /// unrelated command never match it.
 #[cfg(target_os = "macos")]
 fn pids_to_stop() -> Vec<u32> {
-    let exe = crate::setup::app_bundle::app_binary_path();
+    // The app this binary belongs to, wherever it was installed: a fleet
+    // installer puts it in ~/Applications, where the fixed /Applications
+    // path never matched and the menu bar process was left running.
+    let exe = containing_bundle()
+        .map(|b| b.join("Contents/MacOS/voxtype-bin"))
+        .unwrap_or_else(crate::setup::app_bundle::app_binary_path);
     let exe = exe.to_string_lossy();
     let mut pids = Vec::new();
 
