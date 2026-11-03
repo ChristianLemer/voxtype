@@ -21,9 +21,13 @@ pub(crate) async fn first_launch_setup(_config: &config::Config) {
             .map(|entries| {
                 entries.filter_map(|e| e.ok()).any(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    // Whisper models (ggml-*.bin) or Parakeet/ONNX model dirs
+                    // Whisper models (ggml-*.bin) or ONNX model dirs. Any .onnx
+                    // file counts: the int8 Parakeet a fleet installs ships
+                    // encoder-model.int8.onnx, and requiring encoder-model.onnx
+                    // re-ran the model download at every launch, behind a
+                    // firewall that blocks it.
                     (name.starts_with("ggml-") && name.ends_with(".bin"))
-                        || (e.path().is_dir() && e.path().join("encoder-model.onnx").exists())
+                        || (e.path().is_dir() && dir_has_onnx(&e.path()))
                 })
             })
             .unwrap_or(false);
@@ -112,6 +116,16 @@ pub(crate) async fn first_launch_setup(_config: &config::Config) {
             }
         }
     }
+}
+
+fn dir_has_onnx(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.path().extension().is_some_and(|x| x == "onnx"))
+        })
+        .unwrap_or(false)
 }
 
 /// Set on the daemon Voxtype.app starts: the pid of the app.

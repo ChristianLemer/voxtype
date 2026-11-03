@@ -27,7 +27,16 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 failures=0
 summary=""
 pass() { echo "PASS  $1"; summary+="| ✅ | $1 |"$'\n'; }
-fail() { echo "FAIL  $1"; summary+="| ❌ | $1 |"$'\n'; failures=$((failures + 1)); }
+fail() { echo "FAIL  $1"; summary+="| ❌ | $1 |"$'\n'; failures=$((failures + 1)); diag; }
+
+# What Voxtype is doing, printed after a failed check.
+diag() {
+    echo "  --- processes"
+    ps -axo pid,ppid,command | grep '[v]oxtype-bin' | sed 's/^/  /'
+    echo "  --- status: $("$BIN" status 2>&1 | tail -1)"
+    echo "  --- last log lines"
+    tail -n 15 "$HOME/Library/Logs/voxtype/stdout.log" 2>/dev/null | sed 's/^/  /'
+}
 check() { local name="$1"; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 
 # Wait up to $1 seconds for "$2..." to succeed.
@@ -90,7 +99,9 @@ fi
 
 echo "== Launch"
 open -n "$APP"
-check "daemon comes up" wait_for 60 daemon_up
+# A first launch on a fresh machine downloads a speech model before it
+# starts the daemon.
+check "daemon comes up" wait_for 600 daemon_up
 check "menu bar process runs" wait_for 10 app_runs
 check "recording card runs" wait_for 20 card_runs
 check "recording card owns a window" wait_for 20 card_has_window
@@ -118,7 +129,7 @@ echo "$perms"
 check "permissions --json answers" reports_permissions
 
 echo "== Transcription"
-text="$("$BIN" transcribe "$HERE/tests/fixtures/vad/speech_hello.wav" 2>/dev/null | tail -1)"
+text="$("$BIN" -q transcribe "$HERE/tests/fixtures/vad/speech_hello.wav" 2>/dev/null | tail -1)"
 echo "transcribed: $text"
 check "a WAV file transcribes (\"hello\")" grep -qi hello <<<"$text"
 
