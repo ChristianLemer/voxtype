@@ -36,6 +36,14 @@ diag() {
     echo "  --- status: $("$BIN" status 2>&1 | tail -1)"
     echo "  --- last log lines"
     tail -n 15 "$HOME/Library/Logs/voxtype/stdout.log" 2>/dev/null | sed 's/^/  /'
+    echo "  --- stderr"
+    tail -n 15 "$HOME/Library/Logs/voxtype/stderr.log" 2>/dev/null | sed 's/^/  /'
+    local crash
+    crash="$(ls -t "$HOME"/Library/Logs/DiagnosticReports/voxtype-bin* 2>/dev/null | head -1)"
+    if [ -n "$crash" ]; then
+        echo "  --- crash report $crash"
+        head -n 40 "$crash" | sed 's/^/  /'
+    fi
 }
 check() { local name="$1"; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 
@@ -73,7 +81,9 @@ settings_gone() { ! alive "$settings"; }
 new_daemon() { local p; p="$(pid_of daemon)"; [ -n "$p" ] && [ "$p" != "$old_daemon" ]; }
 new_app() { local p; p="$(app_pid)"; [ -n "$p" ] && [ "$p" != "$old_app" ]; }
 reports_permissions() { grep -q '"input_monitoring"' <<<"$perms" && grep -q '"accessibility"' <<<"$perms"; }
-has_tag() { strings "$BIN" | grep -q "$EXPECTED_TAG"; }
+# grep the binary directly: `strings | grep -q` closes the pipe early and
+# strings reports that as an error.
+has_tag() { grep -aq "$EXPECTED_TAG" "$BIN"; }
 
 none_running() { ! pgrep -f 'Voxtype.app/Contents/MacOS/voxtype-bin' >/dev/null; }
 
@@ -96,6 +106,11 @@ echo "$version"
 if [ -n "$EXPECTED_TAG" ]; then
     check "binary names its release ($EXPECTED_TAG)" has_tag
 fi
+
+echo "== Model"
+# The default config uses Whisper base.en. Fetch it up front so the test
+# does not depend on the first launch's own download.
+check "base.en model downloads" "$BIN" setup --download --model base.en --no-post-install --quiet
 
 echo "== Launch"
 open -n "$APP"
