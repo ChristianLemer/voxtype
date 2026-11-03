@@ -41,6 +41,10 @@ pub const VERSION: &str = match option_env!("VOXTYPE_BUILD_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
+/// The fork's release this binary was built for (`desktop-1.1.1-8`), when
+/// it was built from that tag. `None` for any other build.
+pub const RELEASE_TAG: Option<&str> = option_env!("VOXTYPE_RELEASE_TAG");
+
 /// Comma-separated list of every transcription engine name as it appears in
 /// CLI help text.
 ///

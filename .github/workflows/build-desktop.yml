@@ -9,6 +9,11 @@ on:
     branches:
       - 'desktop'
       - 'feat/desktop'
+    # A release is built from its tag, so the binaries know which release
+    # they are (About shows it). Never `v*`: that would fire upstream's
+    # release workflows.
+    tags:
+      - 'desktop-*'
   workflow_dispatch:
 
 jobs:

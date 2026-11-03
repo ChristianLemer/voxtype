@@ -136,6 +136,18 @@ fn expose_build_version() {
     let at_release_tag = git(&["tag", "--points-at", "HEAD"])
         .is_some_and(|tags| tags.lines().any(|t| t == format!("v{pkg}")));
 
+    // The fork's desktop releases are tagged `desktop-<version>-<n>`. Their
+    // CI build runs on the tag, so the tag is known here and the app can name
+    // its release; `--version` keeps the format scripts already read.
+    let desktop_prefix = format!("desktop-{pkg}-");
+    if let Some(tag) = git(&["tag", "--points-at", "HEAD"]).and_then(|tags| {
+        tags.lines()
+            .find(|t| t.starts_with(&desktop_prefix))
+            .map(str::to_string)
+    }) {
+        println!("cargo:rustc-env=VOXTYPE_RELEASE_TAG={tag}");
+    }
+
     let version = if at_release_tag {
         pkg
     } else {

@@ -789,7 +789,10 @@ fn build_menu(config: &Config) -> (Menu, MenuItem) {
 
     #[cfg(feature = "settings-gui")]
     {
-        let about = format!("About Voxtype {}", crate::cli::VERSION);
+        let about = format!(
+            "About Voxtype {}",
+            crate::cli::RELEASE_TAG.unwrap_or(crate::cli::VERSION)
+        );
         let item = MenuItem::with_id(menu_ids::ABOUT, about, true, None);
         menu.append(&item).unwrap();
     }

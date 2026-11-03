@@ -31,6 +31,9 @@ impl SettingsApp {
                         ui.vertical(|ui| {
                             let strong = ui.visuals().strong_text_color();
                             ui.label(egui::RichText::new("Voxtype").size(20.0).color(strong));
+                            if let Some(tag) = crate::cli::RELEASE_TAG {
+                                ui.label(egui::RichText::new(format!("Release {tag}")).size(14.5));
+                            }
                             ui.label(egui::RichText::new(format!("Version {version}")).size(14.5));
                             ui.label(
                                 egui::RichText::new(
@@ -43,7 +46,10 @@ impl SettingsApp {
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Copy version").clicked() {
-                                ui.ctx().copy_text(format!("voxtype {version}"));
+                                ui.ctx().copy_text(match crate::cli::RELEASE_TAG {
+                                    Some(tag) => format!("voxtype {version} ({tag})"),
+                                    None => format!("voxtype {version}"),
+                                });
                                 copied = true;
                             }
                         });
