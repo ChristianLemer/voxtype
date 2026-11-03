@@ -79,12 +79,20 @@ Cargo features of note: `settings-gui` (the settings window), `parakeet` and
 - **Tags** are `desktop-<version>-<n>`, for example `desktop-1.1.1-4`. Never
   `v*`, which would fire upstream's release workflows. `<n>` restarts at 1
   when the version changes.
-- **Publishing.** Download the CI artifacts of the run that built the target
-  commit, name them as earlier releases do (`Voxtype-<version>-macos-arm64.dmg`,
+- **Publishing: tag first, then build, then release.** Tag the commit on
+  `desktop` (`git tag -a desktop-<version>-<n>`) and push the tag: the CI
+  runs on `desktop-*` tags, and `build.rs` stamps the tag into the binaries,
+  which is what About and the menu show (`cli::RELEASE_TAG`). Check it made
+  it in (`strings voxtype | grep desktop-<version>-<n>`), name the tag run's
+  artifacts as earlier releases do (`Voxtype-<version>-macos-arm64.dmg`,
   `Voxtype-macos-arm64.app.zip`, `voxtype-<version>-macos-arm64.tar.gz`,
   `voxtype-<version>-windows-x86_64.exe`, `voxtype-<version>-linux-x86_64`,
-  `SHA256SUMS.txt`), and create a **pre-release** with `gh release create
-  --prerelease --target <full SHA>`. A short SHA is rejected.
+  `SHA256SUMS.txt`), and publish a **pre-release** on the existing tag with
+  `gh release create <tag> --verify-tag --prerelease`. Pushing `desktop` and
+  the tag together starts two runs; cancel the branch one.
+- **macOS runners run short.** A macOS job that waits 15 minutes without a
+  runner is cancelled by GitHub; rerun just that job (`gh run rerun <id>
+  --failed`), it usually gets one within the hour.
 - **Never replace the files of a published release.** A fix is a new release.
 - **Test before releasing** what CI cannot: macOS behaviour on a real Mac,
   Windows on a Windows machine or VM. Prefer releasing the exact artifacts
