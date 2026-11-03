@@ -36,6 +36,10 @@ diag() {
     echo "  --- status: $("$BIN" status 2>&1 | tail -1)"
     echo "  --- last log lines"
     tail -n 15 "$HOME/Library/Logs/voxtype/stdout.log" 2>/dev/null | sed 's/^/  /'
+    if [ -n "${APP_LOG:-}" ]; then
+        echo "  --- app output"
+        tail -n 15 "$APP_LOG" 2>/dev/null | sed 's/^/  /'
+    fi
     echo "  --- stderr"
     tail -n 15 "$HOME/Library/Logs/voxtype/stderr.log" 2>/dev/null | sed 's/^/  /'
     local crash
@@ -62,14 +66,17 @@ pid_of() { pgrep -f "$BIN $1" | head -1; }
 app_pid() { pgrep -fx "$BIN" | head -1; }
 daemon_up() { [ "$("$BIN" status 2>/dev/null)" != "stopped" ] && [ -n "$(pid_of daemon)" ]; }
 
-# On-screen windows owned by a pid, read through CoreGraphics. Unlike System
-# Events this needs no Accessibility grant.
+# Windows owned by a pid, read through CoreGraphics. Unlike System Events
+# this needs no Accessibility grant. The CFArray CoreGraphics returns must be
+# cast to an NSArray before JXA can read it, and option 0 is
+# kCGWindowListOptionAll. Errors go to stderr rather than reading as 0.
 windows_of() {
     osascript -l JavaScript -e "
         ObjC.import('CoreGraphics');
-        const list = ObjC.deepUnwrap(\$.CGWindowListCopyWindowInfo(\$.kCGWindowListOptionAll, 0));
-        list.filter(w => w.kCGWindowOwnerPID === $1 && w.kCGWindowLayer !== undefined).length;
-    " 2>/dev/null || echo 0
+        ObjC.import('Foundation');
+        const list = ObjC.deepUnwrap(ObjC.castRefToObject(\$.CGWindowListCopyWindowInfo(0, 0)));
+        list.filter(w => w.kCGWindowOwnerPID === $1).length;
+    " || echo 0
 }
 card_has_window() { local p; p="$(pid_of osd-card)"; [ -n "$p" ] && [ "$(windows_of "$p")" -ge 1 ]; }
 app_runs() { [ -n "$(app_pid)" ]; }
@@ -113,7 +120,9 @@ echo "== Model"
 check "base.en model downloads" "$BIN" setup --download --model base.en --no-post-install --quiet
 
 echo "== Launch"
-open -n "$APP"
+# open discards the app's own output; keep it for the diagnostics.
+APP_LOG="$(mktemp)"
+open -n --stdout "$APP_LOG" --stderr "$APP_LOG" "$APP"
 # A first launch on a fresh machine downloads a speech model before it
 # starts the daemon.
 check "daemon comes up" wait_for 600 daemon_up
