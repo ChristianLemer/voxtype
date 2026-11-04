@@ -835,7 +835,23 @@ pub fn run(state_file: PathBuf) -> ! {
             println!("Acquired menu bar lock");
         }
         Err(_) => {
-            eprintln!("Error: Another voxtype menubar instance is already running.");
+            // Name the holder: a lock taken by something that is not a menu
+            // bar is a bug, and the bare message gave no way to tell.
+            let holder = std::fs::read_to_string(&lock_path)
+                .ok()
+                .map(|pid| pid.trim().to_string())
+                .unwrap_or_default();
+            let command = std::process::Command::new("ps")
+                .args(["-p", &holder, "-o", "command="])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            eprintln!(
+                "Error: Another voxtype menubar instance is already running \
+                 (lock {}, pid {holder}: {command}).",
+                lock_path.display()
+            );
             std::process::exit(1);
         }
     }

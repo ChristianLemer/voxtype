@@ -34,6 +34,9 @@ diag() {
     echo "  --- processes"
     ps -axo pid,ppid,command | grep '[v]oxtype-bin' | sed 's/^/  /'
     echo "  --- status: $("$BIN" status 2>&1 | tail -1)"
+    for lock in /tmp/voxtype/*.lock; do
+        [ -e "$lock" ] && echo "  --- $lock: $(cat "$lock" 2>/dev/null)"
+    done
     echo "  --- last log lines"
     tail -n 15 "$HOME/Library/Logs/voxtype/stdout.log" 2>/dev/null | sed 's/^/  /'
     if [ -n "${APP_LOG:-}" ]; then
