@@ -158,8 +158,8 @@ pub(crate) fn exit_with_app() {
     // daemon's parent is the old one, though the app it belongs to lives on.
     let app_alive = move || {
         let pid = app as libc::pid_t;
-        unsafe { libc::kill(pid, 0) == 0 }
-        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        let found = unsafe { libc::kill(pid, 0) } == 0;
+        found || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     };
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(300));
