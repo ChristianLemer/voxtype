@@ -90,11 +90,17 @@ impl HotkeyListener for RdevHotkeyListener {
             // never fires. macOS only shows its own dialog when the app is
             // absent from the list — a stale entry left by an earlier build
             // leaves the switch on and the tap dead, with nothing said.
-            crate::notification::send_sync(
-                "Voxtype",
-                "Accessibility permission denied: the hotkey will not respond. \
-                 Grant it in System Settings > Privacy & Security > Accessibility.",
-            );
+            // In the background: delivering it can block (terminal-notifier
+            // waits on macOS), and it held up the daemon before it wrote its
+            // state or listened, so `status` said "stopped" for a running
+            // daemon, which is the state after every update's permission reset.
+            std::thread::spawn(|| {
+                crate::notification::send_sync(
+                    "Voxtype",
+                    "Accessibility permission denied: the hotkey will not respond. \
+                     Grant it in System Settings > Privacy & Security > Accessibility.",
+                );
+            });
 
             let running_watcher = running.clone();
             std::thread::spawn(move || {

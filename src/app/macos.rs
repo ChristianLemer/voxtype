@@ -141,6 +141,8 @@ pub(crate) const APP_PID_VAR: &str = "VOXTYPE_APP_PID";
 /// user was left with dictation but no menu bar (#7). With the daemon gone
 /// as soon as its app is, the reopen starts a whole new app.
 ///
+/// "Gone" means the app's process no longer exists, checked by pid.
+///
 /// A settings window the app opened has the same property and goes the same
 /// way. Only for processes the app started (`VOXTYPE_APP_PID` set): a
 /// daemon run from a terminal or a LaunchAgent keeps running on its own.
@@ -151,9 +153,17 @@ pub(crate) fn exit_with_app() {
     else {
         return;
     };
+    // Whether the app is alive, not whether it is the parent: once
+    // Accessibility is granted the daemon re-executes itself, and the new
+    // daemon's parent is the old one, though the app it belongs to lives on.
+    let app_alive = move || {
+        let pid = app as libc::pid_t;
+        unsafe { libc::kill(pid, 0) == 0 }
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    };
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        if std::os::unix::process::parent_id() != app {
+        if !app_alive() {
             tracing::info!("Voxtype.app (pid {app}) is gone; stopping");
             // The daemon's own SIGTERM handling shuts it down cleanly;
             // exit regardless if that takes too long.
