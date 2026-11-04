@@ -823,6 +823,12 @@ pub fn run(state_file: PathBuf) -> ! {
             std::process::exit(1);
         });
 
+    // The runtime directory may not exist yet: the daemon, started at the
+    // same moment, usually creates it, and /tmp is emptied at every reboot.
+    // pidlock reports any failure to create its file as "lock exists", so a
+    // menu bar that won the race quit as if another one were running, and
+    // took the app with it.
+    let _ = std::fs::create_dir_all(Config::runtime_dir());
     let lock_path = Config::runtime_dir().join("menubar.lock");
     // Holding the mutex proves no other menubar runs; a leftover lockfile is stale.
     #[cfg(windows)]
