@@ -74,7 +74,7 @@ pub fn waveform_columns(width: f32) -> usize {
     (((width - 2.0 * PADDING - ICON_W - 10.0) / 5.0) as usize).clamp(24, 96)
 }
 
-fn paint(c: Color) -> Paint<'static> {
+pub(crate) fn paint(c: Color) -> Paint<'static> {
     let mut p = Paint::default();
     p.set_color_rgba8(
         (c.r.clamp(0.0, 1.0) * 255.0) as u8,
@@ -205,7 +205,7 @@ fn draw_glow(pixmap: &mut Pixmap, t: Transform, scene: &Scene, x: f32, y: f32, w
     }
 }
 
-fn draw_microphone(pixmap: &mut Pixmap, t: Transform, cx: f32, cy: f32, color: Color) {
+pub(crate) fn draw_microphone(pixmap: &mut Pixmap, t: Transform, cx: f32, cy: f32, color: Color) {
     let fill = paint(color);
     if let Some(capsule) = rounded_rect(cx - 4.0, cy - 11.0, 8.0, 14.0, 4.0) {
         pixmap.fill_path(&capsule, &fill, FillRule::Winding, t, None);

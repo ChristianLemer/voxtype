@@ -44,27 +44,70 @@ impl VoxtypeState {
         }
     }
 
-    /// Filled disc in the state's colour. Windows tray icons are images only;
-    /// the emoji title macOS shows has no Windows counterpart.
+    /// The card's microphone, matching the macOS menu bar: grey when ready,
+    /// white on a red plate while recording (the "ON AIR" badge), white on
+    /// orange while transcribing, faded and struck through when stopped.
+    /// Windows tray icons are images only; the emoji title macOS shows has no
+    /// Windows counterpart.
     #[cfg(windows)]
     fn tray_image(&self) -> tray_icon::Icon {
+        use crate::osd::desktop::card::{draw_microphone, paint, rounded_rect};
+        use crate::osd::visual::Color;
+        use tiny_skia::{FillRule, LineCap, PathBuilder, Pixmap, Stroke, Transform};
+
         const SIZE: u32 = 32;
-        let (r, g, b) = match self {
-            VoxtypeState::Idle => (0x3c, 0xb3, 0x71),
-            VoxtypeState::Recording => (0xe0, 0x30, 0x30),
-            VoxtypeState::Transcribing => (0xf0, 0xa0, 0x20),
-            VoxtypeState::Stopped => (0x80, 0x80, 0x80),
+        let rgb =
+            |r: u8, g: u8, b: u8| Color::rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let grey = rgb(0x8e, 0x94, 0x9c);
+
+        let mut pixmap = Pixmap::new(SIZE, SIZE).expect("non-zero icon size");
+        let t = Transform::identity();
+        let plate = match self {
+            VoxtypeState::Recording => Some(rgb(0xe0, 0x30, 0x30)),
+            VoxtypeState::Transcribing => Some(rgb(0xe8, 0x9a, 0x1c)),
+            _ => None,
         };
-        let centre = (SIZE as f32 - 1.0) / 2.0;
-        let radius = SIZE as f32 / 2.0 - 1.0;
-        let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let d = ((x as f32 - centre).powi(2) + (y as f32 - centre).powi(2)).sqrt();
-                let alpha = (radius - d + 0.5).clamp(0.0, 1.0);
-                rgba.extend_from_slice(&[r, g, b, (alpha * 255.0) as u8]);
+        if let Some(colour) = plate {
+            if let Some(p) = rounded_rect(1.0, 1.0, 30.0, 30.0, 7.0) {
+                pixmap.fill_path(&p, &paint(colour), FillRule::Winding, t, None);
+            }
+            draw_microphone(
+                &mut pixmap,
+                t.pre_translate(16.0, 17.0),
+                0.0,
+                0.0,
+                rgb(0xff, 0xff, 0xff),
+            );
+        } else {
+            let stopped = *self == VoxtypeState::Stopped;
+            let colour = if stopped { grey.with_alpha(0.55) } else { grey };
+            // Without a plate the microphone can use the whole icon.
+            let mic = t.pre_scale(1.25, 1.25).pre_translate(12.8, 13.6);
+            draw_microphone(&mut pixmap, mic, 0.0, 0.0, colour);
+            if stopped {
+                let mut pb = PathBuilder::new();
+                pb.move_to(6.0, 6.0);
+                pb.line_to(26.0, 26.0);
+                let stroke = Stroke {
+                    width: 2.6,
+                    line_cap: LineCap::Round,
+                    ..Stroke::default()
+                };
+                if let Some(slash) = pb.finish() {
+                    pixmap.stroke_path(&slash, &paint(grey), &stroke, t, None);
+                }
             }
         }
+
+        // tiny-skia stores premultiplied alpha; tray-icon wants straight RGBA.
+        let rgba: Vec<u8> = pixmap
+            .pixels()
+            .iter()
+            .flat_map(|p| {
+                let c = p.demultiply();
+                [c.red(), c.green(), c.blue(), c.alpha()]
+            })
+            .collect();
         tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("icon buffer matches its size")
     }
 
