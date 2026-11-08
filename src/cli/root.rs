@@ -248,9 +248,18 @@ pub struct Cli {
     #[arg(long, help_heading = "Audio", hide_short_help = true)]
     pub duck_media: bool,
 
-    /// Mute your Microsoft Teams meeting microphone while recording (macOS)
+    /// Mute your Microsoft Teams meeting microphone while recording (macOS, the default)
     #[arg(long, help_heading = "Audio", hide_short_help = true)]
     pub mute_teams: bool,
+
+    /// Leave your Microsoft Teams meeting microphone alone while recording
+    #[arg(
+        long,
+        help_heading = "Audio",
+        hide_short_help = true,
+        conflicts_with = "mute_teams"
+    )]
+    pub no_mute_teams: bool,
 
     /// Percent of its current amplitude ducked media keeps (50 = half, -6 dB)
     #[arg(

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::default_true;
+
 /// Audio capture configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AudioConfig {
@@ -35,7 +37,7 @@ pub struct AudioConfig {
 
     /// Mute the Microsoft Teams meeting microphone during recording and
     /// unmute it on stop, only if it was open (macOS, through Accessibility)
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub mute_teams: bool,
 
     /// Fraction of its current amplitude a ducked stream keeps, in percent
@@ -101,7 +103,7 @@ impl Default for AudioConfig {
             pause_media: false,
             pause_media_ignored_players: Vec::new(),
             duck_media: false,
-            mute_teams: false,
+            mute_teams: true,
             duck_media_volume_percent: default_duck_media_volume_percent(),
             duck_media_fade_ms: default_duck_media_fade_ms(),
             feedback: AudioFeedbackConfig::default(),
@@ -174,5 +176,19 @@ impl Default for AudioFeedbackConfig {
             theme: default_sound_theme(),
             volume: default_volume(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mute_teams_is_on_unless_turned_off() {
+        assert!(AudioConfig::default().mute_teams);
+        let unset: AudioConfig = toml::from_str("").unwrap();
+        assert!(unset.mute_teams);
+        let off: AudioConfig = toml::from_str("mute_teams = false").unwrap();
+        assert!(!off.mute_teams);
     }
 }

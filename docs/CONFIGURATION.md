@@ -419,7 +419,7 @@ duck_media_volume_percent = 34
 ### mute_teams
 
 **Type:** Boolean
-**Default:** `false`
+**Default:** `true`
 **Required:** No
 **Platform:** macOS
 
@@ -427,11 +427,11 @@ When `true`, mutes your Microsoft Teams meeting microphone when recording starts
 
 Voxtype presses Teams' own microphone button through Accessibility, the permission it already needs to type. It recognises the button by its English label ("Mute mic" / "Unmute mic"), so Teams must be set to English for now.
 
-Also available as `--mute-teams` and `VOXTYPE_MUTE_TEAMS=true`.
+Set it to `false` to leave Teams alone, or use `--no-mute-teams` or `VOXTYPE_MUTE_TEAMS=false`.
 
 ```toml
 [audio]
-mute_teams = true
+mute_teams = false
 ```
 
 ### external_trigger_silence_timeout_secs
