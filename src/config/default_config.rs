@@ -65,7 +65,7 @@ max_duration_secs = 60
 # Mute your Microsoft Teams meeting microphone while recording, so the meeting
 # does not hear you dictate, and unmute it as soon as recording stops. Only a
 # microphone that was open is muted, and only what voxtype muted is unmuted.
-# macOS, through Accessibility; Teams in English for now. On by default.
+# macOS and Windows; Teams in English for now. On by default.
 # mute_teams = true
 
 # Lower active media stream volume while recording, then restore it as soon as

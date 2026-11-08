@@ -935,7 +935,7 @@ pub const CONFIG_KEYS: &[KeySpec] = &[
         "Audio",
         "Mute Teams while recording",
         "Mute your Microsoft Teams meeting microphone when recording starts and unmute it when \
-         it stops, only if it was open. macOS, through Accessibility.",
+         it stops, only if it was open. macOS and Windows.",
     ),
     spec(
         "audio.duck_media",

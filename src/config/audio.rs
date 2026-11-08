@@ -36,7 +36,7 @@ pub struct AudioConfig {
     pub duck_media: bool,
 
     /// Mute the Microsoft Teams meeting microphone during recording and
-    /// unmute it on stop, only if it was open (macOS, through Accessibility)
+    /// unmute it on stop, only if it was open (macOS and Windows)
     #[serde(default = "default_true")]
     pub mute_teams: bool,
 

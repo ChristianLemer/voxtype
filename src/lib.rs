@@ -99,6 +99,12 @@ pub mod status_json;
 pub mod teams;
 #[cfg(target_os = "macos")]
 pub mod teams_macos;
+#[cfg(target_os = "macos")]
+pub use teams_macos as teams_ui;
+#[cfg(windows)]
+pub mod teams_windows;
+#[cfg(windows)]
+pub use teams_windows as teams_ui;
 pub mod text;
 pub mod transcribe;
 pub mod tui;

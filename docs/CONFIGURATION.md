@@ -421,11 +421,11 @@ duck_media_volume_percent = 34
 **Type:** Boolean
 **Default:** `true`
 **Required:** No
-**Platform:** macOS
+**Platform:** macOS, Windows
 
 When `true`, mutes your Microsoft Teams meeting microphone when recording starts, so the meeting does not hear you dictate, and unmutes it as soon as recording stops. A microphone that was already muted is left alone, and only what voxtype muted is unmuted. Voxtype's own recording is not affected: it uses the system microphone, which stays open.
 
-Voxtype presses Teams' own microphone button through Accessibility, the permission it already needs to type. It recognises the button by its English label ("Mute mic" / "Unmute mic"), so Teams must be set to English for now.
+Voxtype presses Teams' own microphone button, through Accessibility on macOS (the permission it already needs to type) and UI Automation on Windows. It recognises the button by its English label ("Mute mic" / "Unmute mic"), so Teams must be set to English for now.
 
 Set it to `false` to leave Teams alone, or use `--no-mute-teams` or `VOXTYPE_MUTE_TEAMS=false`.
 

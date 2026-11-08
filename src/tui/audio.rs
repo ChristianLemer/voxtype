@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn every_audio_schema_key_has_a_form_field() {
         const NOT_IN_TUI: &[&str] = &[
-            // macOS only; the TUI is the Linux configurator, where Teams has
+            // macOS and Windows only; the TUI is the Linux configurator, where Teams has
             // no desktop app to mute.
             "audio.mute_teams",
         ];
