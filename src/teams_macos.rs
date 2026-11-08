@@ -58,8 +58,12 @@ fn string_attribute(element: &CFType, name: &str) -> Option<String> {
 
 fn children(element: &CFType, name: &str) -> Vec<CFType> {
     attribute(element, name)
-        .and_then(|v| v.downcast::<CFArray<CFType>>())
-        .map(|a| a.iter().map(|c| c.clone()).collect())
+        .and_then(|v| v.downcast::<CFArray>())
+        .map(|a| {
+            a.iter()
+                .map(|item| unsafe { CFType::wrap_under_get_rule(*item as CFTypeRef) })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
