@@ -171,7 +171,11 @@ impl Model {
         };
         self.wave.resize(columns, 0.0);
         for (level, target) in self.wave.iter_mut().zip(targets) {
-            let stiffness = if target > *level { WAVE_RISE } else { WAVE_FALL };
+            let stiffness = if target > *level {
+                WAVE_RISE
+            } else {
+                WAVE_FALL
+            };
             *level = approach(*level, target, stiffness, dt);
         }
         let held_dbfs = self.feed.peak_hold.lock().unwrap().held_dbfs;

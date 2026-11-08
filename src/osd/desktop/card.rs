@@ -266,7 +266,11 @@ fn draw_waveform(
     let cy = y + h / 2.0;
     let amp = (h * 0.45).max(1.0);
     let point = |i: usize| {
-        let along = if n <= 1 { 0.0 } else { i as f32 / (n - 1) as f32 };
+        let along = if n <= 1 {
+            0.0
+        } else {
+            i as f32 / (n - 1) as f32
+        };
         let envelope = sensitive(smoothed[i] * gain).max(0.015);
         let ripple = (phase * 2.0 + along * std::f32::consts::PI * 3.0).sin() * 0.04;
         (x + along * w, envelope, ripple)
@@ -288,7 +292,13 @@ fn draw_waveform(
     }
     fill.close();
     if let Some(path) = fill.finish() {
-        pixmap.fill_path(&path, &paint(with_alpha(color, 0.18)), FillRule::Winding, t, None);
+        pixmap.fill_path(
+            &path,
+            &paint(with_alpha(color, 0.18)),
+            FillRule::Winding,
+            t,
+            None,
+        );
     }
 
     let mut line = PathBuilder::new();
@@ -303,7 +313,11 @@ fn draw_waveform(
     }
     if let Some(path) = line.finish() {
         // Three passes, wide and faint to narrow and solid: a soft glow.
-        for (alpha, width) in [(0.75 * 0.25, 1.4 * 4.0), (0.75 * 0.55, 1.4 * 2.0), (0.75, 1.4)] {
+        for (alpha, width) in [
+            (0.75 * 0.25, 1.4 * 4.0),
+            (0.75 * 0.55, 1.4 * 2.0),
+            (0.75, 1.4),
+        ] {
             let stroke = Stroke {
                 width,
                 line_cap: LineCap::Round,

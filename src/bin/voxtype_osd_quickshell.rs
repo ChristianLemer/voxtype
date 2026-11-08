@@ -68,9 +68,9 @@ use std::os::fd::FromRawFd;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
 #[cfg(unix)]
 use std::process::Stdio;
+use std::process::{Command, ExitCode};
 #[cfg(unix)]
 use std::sync::{Arc, Mutex};
 #[cfg(windows)]

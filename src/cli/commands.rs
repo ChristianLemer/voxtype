@@ -89,6 +89,11 @@ pub enum Commands {
     #[command(hide = true)]
     OsdCard,
 
+    /// Test Microsoft Teams' local API: mute and unmute the current meeting
+    #[cfg(any(target_os = "macos", windows))]
+    #[command(hide = true)]
+    TeamsProbe,
+
     /// Open the settings window (started from the menu bar icon)
     #[cfg(feature = "settings-gui")]
     #[command(hide = true)]
