@@ -928,6 +928,16 @@ pub const CONFIG_KEYS: &[KeySpec] = &[
         "Pause MPRIS players when recording starts and resume when it stops.",
     ),
     spec(
+        "audio.mute_teams",
+        "audio",
+        "mute_teams",
+        KeyType::Bool,
+        "Audio",
+        "Mute Teams while recording",
+        "Mute your Microsoft Teams meeting microphone when recording starts and unmute it when \
+         it stops, only if it was open. macOS, through Accessibility.",
+    ),
+    spec(
         "audio.duck_media",
         "audio",
         "duck_media",
@@ -2548,6 +2558,7 @@ pub fn resolve(key: &str, cfg: &Config) -> Option<Json> {
         "audio.max_duration_secs" => json!(cfg.audio.max_duration_secs),
         "audio.pause_media" => json!(cfg.audio.pause_media),
         "audio.duck_media" => json!(cfg.audio.duck_media),
+        "audio.mute_teams" => json!(cfg.audio.mute_teams),
         "audio.duck_media_volume_percent" => json!(cfg.audio.duck_media_volume_percent),
         "audio.duck_media_fade_ms" => json!(cfg.audio.duck_media_fade_ms),
         "audio.feedback.enabled" => json!(cfg.audio.feedback.enabled),

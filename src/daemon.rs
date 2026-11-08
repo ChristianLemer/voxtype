@@ -1162,6 +1162,9 @@ pub struct Daemon {
     // so the next duck/restore can serialize against it; see
     // `duck_media_streams` for why capturing originals mid-fade is unsafe.
     media_fade_task: Option<tokio::task::JoinHandle<()>>,
+    // Mutes the Teams meeting while recording (`audio.mute_teams`)
+    #[cfg(target_os = "macos")]
+    teams_muter: Option<crate::teams_macos::TeamsMuter>,
 }
 
 impl Daemon {
@@ -1240,6 +1243,12 @@ impl Daemon {
             None
         };
 
+        #[cfg(target_os = "macos")]
+        let teams_muter = config
+            .audio
+            .mute_teams
+            .then(crate::teams_macos::TeamsMuter::new);
+
         Self {
             start_request: None,
             config,
@@ -1278,6 +1287,8 @@ impl Daemon {
             paused_media_players: Vec::new(),
             ducked_media_streams: Vec::new(),
             media_fade_task: None,
+            #[cfg(target_os = "macos")]
+            teams_muter,
         }
     }
 
@@ -1362,6 +1373,10 @@ impl Daemon {
     /// Suppress media before opening the microphone so playback cannot leak
     /// into the beginning of a recording.
     async fn suppress_recording_media(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(muter) = &self.teams_muter {
+            muter.mute();
+        }
         self.pause_media_players().await;
         self.duck_media_streams().await;
     }
@@ -1370,6 +1385,10 @@ impl Daemon {
     /// and text output may continue after this point without keeping playback
     /// paused or ducked.
     fn restore_recording_media(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(muter) = &self.teams_muter {
+            muter.restore();
+        }
         self.restore_ducked_media_streams();
         self.resume_media_players();
     }

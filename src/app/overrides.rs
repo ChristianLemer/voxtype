@@ -228,6 +228,9 @@ pub(crate) fn apply_cli_overrides(config: &mut config::Config, cli: &Cli) -> Opt
     if cli.duck_media {
         config.audio.duck_media = true;
     }
+    if cli.mute_teams {
+        config.audio.mute_teams = true;
+    }
     if let Some(volume) = cli.duck_media_volume {
         config.audio.duck_media_volume_percent = volume.min(150);
     }

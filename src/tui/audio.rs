@@ -793,7 +793,11 @@ mod tests {
     /// add it to `NOT_IN_TUI` with a reason rather than deleting the test.
     #[test]
     fn every_audio_schema_key_has_a_form_field() {
-        const NOT_IN_TUI: &[&str] = &[];
+        const NOT_IN_TUI: &[&str] = &[
+            // macOS only; the TUI is the Linux configurator, where Teams has
+            // no desktop app to mute.
+            "audio.mute_teams",
+        ];
 
         let expected: Vec<&str> = scalar_keys()
             .filter(|s| s.section == "Audio")

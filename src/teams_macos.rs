@@ -1,9 +1,15 @@
 //! Reaching Microsoft Teams' meeting controls through macOS Accessibility.
 //!
 //! Some organisations hide Teams' local third-party API, so this reads the
-//! meeting window's buttons the way a screen reader does. `voxtype teams-ax`
-//! lists them, to learn what the microphone button is called in a given
-//! Teams version and language, and `--press` presses one by its label.
+//! meeting window's buttons the way a screen reader does. `TeamsMuter` mutes
+//! the meeting while voxtype records (`audio.mute_teams`). `voxtype teams-ax`
+//! lists the buttons, to learn what the microphone button is called in a
+//! given Teams version and language, and `--press` presses one by its label.
+//!
+//! Teams draws its meeting window with web content, which builds its
+//! accessibility tree only once asked to (`AXManualAccessibility`) and takes
+//! a moment to do so: a first read right after asking finds 19 elements
+//! instead of the meeting controls.
 
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
@@ -165,22 +171,10 @@ fn teams_apps() -> anyhow::Result<Vec<(i32, CFType)>> {
     }
     let mut apps = Vec::new();
     for pid in pids {
-        let app = unsafe { AXUIElementCreateApplication(pid) };
-        if app.is_null() {
+        let Some(app) = app_element(pid) else {
             continue;
-        }
-        let app = unsafe { CFType::wrap_under_create_rule(app as CFTypeRef) };
-        // Web content only builds its accessibility tree once asked to.
-        for attr in ["AXManualAccessibility", "AXEnhancedUserInterface"] {
-            let name = CFString::new(attr);
-            unsafe {
-                AXUIElementSetAttributeValue(
-                    app.as_CFTypeRef(),
-                    name.as_concrete_TypeRef(),
-                    CFBoolean::true_value().as_CFTypeRef(),
-                );
-            }
-        }
+        };
+        set_manual_accessibility(&app);
         apps.push((pid, app));
     }
     // Give the web views a moment to build the tree they were just asked for.
@@ -313,4 +307,168 @@ pub fn probe(press: Option<String>, dump_tree: bool) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The microphone button's label while the microphone is open.
+const MUTE_LABELS: &[&str] = &["Mute mic"];
+/// Its label while the microphone is muted.
+const UNMUTE_LABELS: &[&str] = &["Unmute mic"];
+
+/// How often the worker asks newly started Teams processes to expose their
+/// web content, so the tree is ready by the time a recording starts.
+const WARM_INTERVAL: std::time::Duration = std::time::Duration::from_secs(20);
+
+enum Request {
+    Mute,
+    Restore,
+}
+
+/// Mutes the Teams meeting while voxtype records, and unmutes it afterwards
+/// only if it was voxtype that muted it.
+///
+/// Accessibility calls go to Teams over IPC and can take a while, so they
+/// run on a thread of their own and never hold up the recording. Requests
+/// are handled in order, so a restore always follows the mute it undoes.
+pub struct TeamsMuter {
+    tx: std::sync::mpsc::Sender<Request>,
+}
+
+impl TeamsMuter {
+    pub fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("teams-mute".into())
+            .spawn(move || worker(rx))
+            .expect("spawn the Teams mute thread");
+        Self { tx }
+    }
+
+    /// Mute the meeting's microphone if Teams is in a meeting with it open.
+    pub fn mute(&self) {
+        let _ = self.tx.send(Request::Mute);
+    }
+
+    /// Unmute it again if `mute` muted it.
+    pub fn restore(&self) {
+        let _ = self.tx.send(Request::Restore);
+    }
+}
+
+impl Default for TeamsMuter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn worker(rx: std::sync::mpsc::Receiver<Request>) {
+    use std::sync::mpsc::RecvTimeoutError;
+
+    let mut warmed: Vec<i32> = Vec::new();
+    let mut muted_by_us = false;
+    warm(&mut warmed);
+    loop {
+        match rx.recv_timeout(WARM_INTERVAL) {
+            Ok(Request::Mute) => {
+                if warm(&mut warmed) {
+                    // Teams was just started: give its web content time to
+                    // build the tree we asked for.
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                muted_by_us = press_first(MUTE_LABELS);
+                if muted_by_us {
+                    tracing::info!("Muted the Teams meeting while recording");
+                }
+            }
+            Ok(Request::Restore) => {
+                if std::mem::take(&mut muted_by_us) && press_first(UNMUTE_LABELS) {
+                    tracing::info!("Unmuted the Teams meeting");
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                warm(&mut warmed);
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn set_manual_accessibility(app: &CFType) {
+    for attr in ["AXManualAccessibility", "AXEnhancedUserInterface"] {
+        let name = CFString::new(attr);
+        unsafe {
+            AXUIElementSetAttributeValue(
+                app.as_CFTypeRef(),
+                name.as_concrete_TypeRef(),
+                CFBoolean::true_value().as_CFTypeRef(),
+            );
+        }
+    }
+}
+
+fn app_element(pid: i32) -> Option<CFType> {
+    let app = unsafe { AXUIElementCreateApplication(pid) };
+    (!app.is_null()).then(|| unsafe { CFType::wrap_under_create_rule(app as CFTypeRef) })
+}
+
+/// Ask every Teams process not seen before to expose its web content.
+/// Returns whether there was one.
+fn warm(warmed: &mut Vec<i32>) -> bool {
+    let pids = teams_pids();
+    warmed.retain(|pid| pids.contains(pid));
+    let mut new = false;
+    for pid in pids {
+        if !warmed.contains(&pid) {
+            if let Some(app) = app_element(pid) {
+                set_manual_accessibility(&app);
+            }
+            warmed.push(pid);
+            new = true;
+        }
+    }
+    new
+}
+
+fn find_button(
+    element: &CFType,
+    labels: &[&str],
+    depth: usize,
+    seen: &mut usize,
+) -> Option<CFType> {
+    if depth > MAX_DEPTH || *seen > MAX_NODES {
+        return None;
+    }
+    *seen += 1;
+    if string_attribute(element, "AXRole").as_deref() == Some("AXButton") {
+        if let Some(title) = string_attribute(element, "AXTitle") {
+            if labels.contains(&title.as_str()) {
+                return Some(element.clone());
+            }
+        }
+    }
+    children(element, "AXChildren")
+        .iter()
+        .find_map(|child| find_button(child, labels, depth + 1, seen))
+}
+
+/// Press the first button in any Teams window titled with one of `labels`.
+fn press_first(labels: &[&str]) -> bool {
+    let started = std::time::Instant::now();
+    let button = teams_pids()
+        .into_iter()
+        .filter_map(app_element)
+        .find_map(|app| {
+            children(&app, "AXWindows").iter().find_map(|window| {
+                let mut seen = 0;
+                find_button(window, labels, 0, &mut seen)
+            })
+        });
+    let Some(button) = button else {
+        tracing::debug!(?labels, "No Teams button found");
+        return false;
+    };
+    let action = CFString::new("AXPress");
+    let err =
+        unsafe { AXUIElementPerformAction(button.as_CFTypeRef(), action.as_concrete_TypeRef()) };
+    tracing::debug!(?labels, err, elapsed = ?started.elapsed(), "Pressed Teams button");
+    err == 0
 }

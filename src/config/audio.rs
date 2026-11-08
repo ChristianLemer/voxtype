@@ -33,6 +33,11 @@ pub struct AudioConfig {
     #[serde(default)]
     pub duck_media: bool,
 
+    /// Mute the Microsoft Teams meeting microphone during recording and
+    /// unmute it on stop, only if it was open (macOS, through Accessibility)
+    #[serde(default)]
+    pub mute_teams: bool,
+
     /// Fraction of its current amplitude a ducked stream keeps, in percent
     /// (50 = half the amplitude, -6 dB). Converted internally to PulseAudio's
     /// cubic percentage scale.
@@ -96,6 +101,7 @@ impl Default for AudioConfig {
             pause_media: false,
             pause_media_ignored_players: Vec::new(),
             duck_media: false,
+            mute_teams: false,
             duck_media_volume_percent: default_duck_media_volume_percent(),
             duck_media_fade_ms: default_duck_media_fade_ms(),
             feedback: AudioFeedbackConfig::default(),

@@ -62,6 +62,12 @@ max_duration_secs = 60
 # ignoring browsers whose MPRIS status is unreliable.
 # pause_media_ignored_players = ["chromium", "firefox"]
 
+# Mute your Microsoft Teams meeting microphone while recording, so the meeting
+# does not hear you dictate, and unmute it as soon as recording stops. Only a
+# microphone that was open is muted, and only what voxtype muted is unmuted.
+# macOS, through Accessibility; Teams in English for now.
+# mute_teams = false
+
 # Lower active media stream volume while recording, then restore it as soon as
 # recording stops. This is separate from pause_media; enable one behavior or
 # the other depending on whether you want media paused or only quieter.

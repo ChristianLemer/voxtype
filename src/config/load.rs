@@ -161,6 +161,9 @@ pub fn load_config(path: Option<&Path>) -> Result<Config, VoxtypeError> {
     if let Ok(val) = std::env::var("VOXTYPE_DUCK_MEDIA") {
         config.audio.duck_media = parse_bool_env(&val);
     }
+    if let Ok(val) = std::env::var("VOXTYPE_MUTE_TEAMS") {
+        config.audio.mute_teams = parse_bool_env(&val);
+    }
     if let Ok(val) = std::env::var("VOXTYPE_DUCK_MEDIA_VOLUME_PERCENT") {
         if let Ok(n) = val.parse::<u8>() {
             config.audio.duck_media_volume_percent = n.min(150);
