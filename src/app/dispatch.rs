@@ -93,6 +93,10 @@ pub(crate) async fn dispatch(
         Commands::TeamsProbe => {
             voxtype::teams::probe().await?;
         }
+        #[cfg(target_os = "macos")]
+        Commands::TeamsAx { press } => {
+            voxtype::teams_macos::probe(press)?;
+        }
         #[cfg(any(target_os = "macos", windows))]
         Commands::Menubar => {
             let state_file = config

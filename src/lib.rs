@@ -97,6 +97,8 @@ pub mod setup;
 pub mod state;
 pub mod status_json;
 pub mod teams;
+#[cfg(target_os = "macos")]
+pub mod teams_macos;
 pub mod text;
 pub mod transcribe;
 pub mod tui;

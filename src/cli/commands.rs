@@ -94,6 +94,15 @@ pub enum Commands {
     #[command(hide = true)]
     TeamsProbe,
 
+    /// List Microsoft Teams' meeting buttons through Accessibility, or press one
+    #[cfg(target_os = "macos")]
+    #[command(hide = true)]
+    TeamsAx {
+        /// Press the first button whose label contains this text
+        #[arg(long, value_name = "TEXT")]
+        press: Option<String>,
+    },
+
     /// Open the settings window (started from the menu bar icon)
     #[cfg(feature = "settings-gui")]
     #[command(hide = true)]
