@@ -27,6 +27,10 @@ extern "C" {
         attribute: core_foundation::string::CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    fn AXUIElementCopyAttributeNames(
+        element: AXUIElementRef,
+        names: *mut core_foundation::array::CFArrayRef,
+    ) -> AXError;
     fn AXUIElementPerformAction(
         element: AXUIElementRef,
         action: core_foundation::string::CFStringRef,
@@ -54,6 +58,33 @@ fn string_attribute(element: &CFType, name: &str) -> Option<String> {
         .downcast::<CFString>()?
         .to_string();
     (!s.is_empty()).then_some(s)
+}
+
+fn value_text(element: &CFType) -> Option<String> {
+    use core_foundation::number::CFNumber;
+    let v = attribute(element, "AXValue")?;
+    if let Some(s) = v.downcast::<CFString>() {
+        return Some(format!("{:?}", s.to_string()));
+    }
+    if let Some(b) = v.downcast::<CFBoolean>() {
+        return Some(bool::from(b).to_string());
+    }
+    v.downcast::<CFNumber>()
+        .and_then(|n| n.to_f64())
+        .map(|n| n.to_string())
+}
+
+fn attribute_names(element: &CFType) -> Vec<String> {
+    let mut names: core_foundation::array::CFArrayRef = std::ptr::null();
+    let err = unsafe { AXUIElementCopyAttributeNames(element.as_CFTypeRef(), &mut names) };
+    if err != 0 || names.is_null() {
+        return Vec::new();
+    }
+    let names: CFArray = unsafe { CFArray::wrap_under_create_rule(names) };
+    names
+        .iter()
+        .map(|n| unsafe { CFString::wrap_under_get_rule(*n as _) }.to_string())
+        .collect()
 }
 
 fn children(element: &CFType, name: &str) -> Vec<CFType> {
@@ -126,12 +157,13 @@ fn collect(element: &CFType, window: &str, depth: usize, seen: &mut usize, out: 
     }
 }
 
-fn controls() -> anyhow::Result<Vec<Control>> {
+/// Teams' application elements, with web content asked to expose itself.
+fn teams_apps() -> anyhow::Result<Vec<(i32, CFType)>> {
     let pids = teams_pids();
     if pids.is_empty() {
         anyhow::bail!("Teams is not running (no MSTeams process)");
     }
-    let mut out = Vec::new();
+    let mut apps = Vec::new();
     for pid in pids {
         let app = unsafe { AXUIElementCreateApplication(pid) };
         if app.is_null() {
@@ -149,6 +181,16 @@ fn controls() -> anyhow::Result<Vec<Control>> {
                 );
             }
         }
+        apps.push((pid, app));
+    }
+    // Give the web views a moment to build the tree they were just asked for.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    Ok(apps)
+}
+
+fn controls() -> anyhow::Result<Vec<Control>> {
+    let mut out = Vec::new();
+    for (pid, app) in teams_apps()? {
         let windows = children(&app, "AXWindows");
         println!("Teams process {pid}: {} window(s)", windows.len());
         for window in windows {
@@ -161,13 +203,85 @@ fn controls() -> anyhow::Result<Vec<Control>> {
     Ok(out)
 }
 
-/// `voxtype teams-ax [--press LABEL]`
-pub fn probe(press: Option<String>) -> anyhow::Result<()> {
+fn print_tree(
+    element: &CFType,
+    depth: usize,
+    max_depth: usize,
+    with_names: bool,
+    seen: &mut usize,
+) {
+    if depth > max_depth || *seen > 3000 {
+        return;
+    }
+    *seen += 1;
+    let role = string_attribute(element, "AXRole").unwrap_or_default();
+    let subrole = string_attribute(element, "AXSubrole")
+        .map(|s| format!("/{s}"))
+        .unwrap_or_default();
+    let label = label_of(element).unwrap_or_default();
+    let value = value_text(element)
+        .map(|v| format!(" AXValue={v}"))
+        .unwrap_or_default();
+    let kids = children(element, "AXChildren");
+    println!(
+        "{}{role}{subrole} {label}{value} ({} children)",
+        "  ".repeat(depth),
+        kids.len()
+    );
+    if with_names {
+        println!(
+            "{}  attributes: {}",
+            "  ".repeat(depth),
+            attribute_names(element).join(", ")
+        );
+    }
+    for child in &kids {
+        print_tree(child, depth + 1, max_depth, with_names, seen);
+    }
+}
+
+/// `voxtype teams-ax --dump`: the menu bar, and every element of the meeting
+/// window(s), with their attribute names, to see where the controls live.
+fn dump() -> anyhow::Result<()> {
+    for (pid, app) in teams_apps()? {
+        println!("== Teams process {pid}");
+        println!(
+            "-- application attributes: {}",
+            attribute_names(&app).join(", ")
+        );
+        if let Some(menu_bar) = attribute(&app, "AXMenuBar") {
+            println!("-- menu bar");
+            let mut seen = 0;
+            print_tree(&menu_bar, 0, 4, false, &mut seen);
+        }
+        for window in children(&app, "AXWindows") {
+            let title = string_attribute(&window, "AXTitle").unwrap_or_default();
+            let lower = title.to_lowercase();
+            if !["meeting", "réunion", "call", "appel"]
+                .iter()
+                .any(|w| lower.contains(w))
+            {
+                println!("-- window {title:?} (skipped)");
+                continue;
+            }
+            println!("-- window {title:?}");
+            let mut seen = 0;
+            print_tree(&window, 0, MAX_DEPTH, true, &mut seen);
+        }
+    }
+    Ok(())
+}
+
+/// `voxtype teams-ax [--press LABEL | --dump]`
+pub fn probe(press: Option<String>, dump_tree: bool) -> anyhow::Result<()> {
     if !crate::hotkey_macos::check_accessibility_permission() {
         anyhow::bail!(
             "Accessibility is not granted to the app running this command (the Terminal).\n  \
              Allow it in System Settings > Privacy & Security > Accessibility, then run again."
         );
+    }
+    if dump_tree {
+        return dump();
     }
     let found = controls()?;
     match press {

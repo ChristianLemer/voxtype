@@ -94,8 +94,8 @@ pub(crate) async fn dispatch(
             voxtype::teams::probe().await?;
         }
         #[cfg(target_os = "macos")]
-        Commands::TeamsAx { press } => {
-            voxtype::teams_macos::probe(press)?;
+        Commands::TeamsAx { press, dump } => {
+            voxtype::teams_macos::probe(press, dump)?;
         }
         #[cfg(any(target_os = "macos", windows))]
         Commands::Menubar => {

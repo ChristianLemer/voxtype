@@ -101,6 +101,10 @@ pub enum Commands {
         /// Press the first button whose label contains this text
         #[arg(long, value_name = "TEXT")]
         press: Option<String>,
+
+        /// Print the menu bar and the meeting window's whole element tree
+        #[arg(long, conflicts_with = "press")]
+        dump: bool,
     },
 
     /// Open the settings window (started from the menu bar icon)
