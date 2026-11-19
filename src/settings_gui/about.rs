@@ -37,7 +37,7 @@ impl SettingsApp {
                             ui.label(egui::RichText::new(format!("Version {version}")).size(14.5));
                             ui.label(
                                 egui::RichText::new(
-                                    "Desktop build of voxtype for Windows and macOS, \
+                                    "Desktop build of voxtype for Windows, macOS and Linux, \
                                      from the ChristianLemer/voxtype fork.",
                                 )
                                 .size(12.0)

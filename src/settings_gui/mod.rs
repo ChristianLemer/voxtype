@@ -16,6 +16,7 @@ mod about;
 mod models;
 #[cfg(target_os = "macos")]
 mod permissions;
+mod theme;
 
 use crate::config::schema::{self, KeySpec, KeyType};
 use crate::config::{load_config, Config};
@@ -102,8 +103,11 @@ fn open(
         "voxtype-settings",
         options,
         Box::new(move |cc| {
+            theme::apply_omarchy(&cc.egui_ctx);
             style(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::new(path, config, section.as_deref())))
+            let mut app = SettingsApp::new(path, config, section.as_deref());
+            app.theme = Some(theme::Follow::start(&cc.egui_ctx));
+            Ok(Box::new(app))
         }),
     )
 }
@@ -124,6 +128,8 @@ struct SettingsApp {
     models: models::State,
     #[cfg(target_os = "macos")]
     permissions: permissions::State,
+    /// Follows the desktop theme while the window is open.
+    theme: Option<theme::Follow>,
 }
 
 /// Panes that are not a schema section: they act rather than set a key.
@@ -170,6 +176,7 @@ impl SettingsApp {
             models: models::State::default(),
             #[cfg(target_os = "macos")]
             permissions: permissions::State::default(),
+            theme: None,
         }
     }
 
@@ -523,7 +530,12 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let sidebar_fill = sidebar_color(ui.visuals());
+        if self.theme.as_ref().is_some_and(theme::Follow::changed) {
+            theme::apply_omarchy(ui.ctx());
+            style(ui.ctx());
+        }
+        let surfaces = theme::surfaces(ui);
+        let sidebar_fill = surfaces.sidebar;
         if self.restart_pending || self.message.is_some() {
             egui::Panel::bottom("status")
                 .show_separator_line(true)
@@ -543,7 +555,7 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(content_color(ui.visuals()))
+                    .fill(surfaces.content)
                     .inner_margin(egui::Margin {
                         left: 24,
                         right: 8,
@@ -585,25 +597,12 @@ fn style(ctx: &egui::Context) {
 
 /// A rounded card, a shade apart from the window, like a grouped form.
 fn card(ui: &egui::Ui) -> egui::Frame {
-    let visuals = ui.visuals();
-    let (fill, stroke) = if visuals.dark_mode {
-        (egui::Color32::from_gray(38), egui::Color32::from_gray(52))
-    } else {
-        (egui::Color32::WHITE, egui::Color32::from_gray(222))
-    };
+    let surfaces = theme::surfaces(ui);
     egui::Frame::new()
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0_f32, stroke))
+        .fill(surfaces.card)
+        .stroke(egui::Stroke::new(1.0_f32, surfaces.card_stroke))
         .corner_radius(10)
         .inner_margin(egui::Margin::symmetric(16, 6))
-}
-
-fn content_color(visuals: &egui::Visuals) -> egui::Color32 {
-    if visuals.dark_mode {
-        egui::Color32::from_gray(30)
-    } else {
-        egui::Color32::from_gray(246)
-    }
 }
 
 /// An on/off switch, the way macOS and Windows settings show a boolean.
@@ -616,13 +615,8 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     }
     if ui.is_rect_visible(rect) {
         let t = ui.ctx().animate_bool_responsive(response.id, *on);
-        let visuals = ui.visuals();
-        let off_fill = if visuals.dark_mode {
-            egui::Color32::from_gray(70)
-        } else {
-            egui::Color32::from_gray(200)
-        };
-        let fill = off_fill.lerp_to_gamma(visuals.selection.bg_fill, t);
+        let off_fill = theme::surfaces(ui).toggle_off;
+        let fill = off_fill.lerp_to_gamma(ui.visuals().selection.bg_fill, t);
         let radius = rect.height() / 2.0;
         ui.painter().rect_filled(rect, radius, fill);
         let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
@@ -631,14 +625,6 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
             .circle_filled(knob, radius - 2.5, egui::Color32::WHITE);
     }
     response
-}
-
-fn sidebar_color(visuals: &egui::Visuals) -> egui::Color32 {
-    if visuals.dark_mode {
-        egui::Color32::from_gray(24)
-    } else {
-        egui::Color32::from_gray(236)
-    }
 }
 
 fn section_icon(section: &str) -> &'static str {
