@@ -94,6 +94,11 @@ Cargo features of note: `settings-gui` (the settings window), `parakeet` and
   runner is cancelled by GitHub; rerun just that job (`gh run rerun <id>
   --failed`), it usually gets one within the hour.
 - **Never replace the files of a published release.** A fix is a new release.
+- **Linux install.** `nu scripts/desktop-install.nu --force` puts the latest
+  desktop build in `/usr/local/bin/voxtype`, ahead of the distribution's
+  package, which stays installed for the OSD and the audio bridge; a systemd
+  drop-in points the user service at it. Without `--force` it is a dry run;
+  `--remove --force` goes back to the distribution's voxtype.
 - **Test before releasing** what CI cannot: macOS behaviour on a real Mac,
   Windows on a Windows machine or VM. Prefer releasing the exact artifacts
   that were tested.
